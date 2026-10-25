@@ -1,0 +1,7 @@
+# The local half of the "PC" agent: PyAutoGUI drives the mouse and keyboard,
+# Pillow is what takes the screenshots it sends back.
+#
+#     pip install -r pc-agent/requirements.txt
+#
+pyautogui>=0.9.54
+pillow>=10.0.0

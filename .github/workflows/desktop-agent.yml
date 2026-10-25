@@ -1,0 +1,265 @@
+# Build, verify and publish Paradox Desktop Agent (Windows x64).
+#
+# Two independent channels, decided once in the `config` job:
+#
+#   development  every push or pull request touching desktop/**, and a manual
+#                run with channel=development.
+#                No certificate, no public domain, no publication. The installer
+#                is downloaded from the run's artifacts.
+#
+#   production   a `desktop-v<version>` tag, or nothing: a manual run may select
+#                release only to see the validation fail informatively.
+#                Requires an HTTPS production URL, a trusted signing certificate,
+#                the expected publisher, a signature Windows verifies on the
+#                final file, and an explicit publish=true to be published.
+#
+# The production environment is `desktop-production`, so the owner can require a
+# manual approval before anything official is built. Development builds use no
+# environment and need no secrets at all.
+#
+# Configuration (repository variables unless stated otherwise):
+#
+#   desktop-production environment
+#     PARADOX_API_URL               https://app.getparadox.<tld>
+#     PARADOX_SIGN_PUBLISHER        exact expected certificate subject
+#     secrets.WINDOWS_CERT_PFX_BASE64   base64 of the .pfx
+#     secrets.WINDOWS_CERT_PASSWORD     its password
+#     PARADOX_RELEASE_OWNERS        GitHub usernames allowed to publish
+#
+# Development builds of the same checkout need none of these.
+
+name: Desktop Agent
+
+on:
+  push:
+    branches: [main]
+    # A tag is what makes a release official; path filters do not apply to tags.
+    tags: ["desktop-v*"]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-agent.yml"
+      - ".github/actions/build-desktop/**"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-agent.yml"
+      - ".github/actions/build-desktop/**"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "development builds a test installer; release validates the full production path"
+        type: choice
+        default: development
+        options: [development, release]
+      publish:
+        description: "release only: publish the verified installer and its manifest"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}-${{ inputs.channel || 'development' }}
+  cancel-in-progress: false
+
+jobs:
+  config:
+    name: Decide the channel
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.resolve.outputs.channel }}
+      version: ${{ steps.resolve.outputs.version }}
+      publish: ${{ steps.resolve.outputs.publish }}
+      download-url: ${{ steps.resolve.outputs.download-url }}
+    steps:
+      - name: Resolve channel, version and destination
+        id: resolve
+        shell: bash
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+        # Every branch is decided here, so a development run cannot inherit
+        # production flags and a tag cannot be treated as a test build.
+        run: |
+          set -euo pipefail
+          channel=development
+          version=""
+          publish=false
+          download_url=""
+
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              channel="${INPUT_CHANNEL:-development}"
+              publish="${INPUT_PUBLISH:-false}"
+              ;;
+            push)
+              if [ "$REF_TYPE" = "tag" ]; then
+                channel=production
+                case "$REF_NAME" in
+                  desktop-v*) version="${REF_NAME#desktop-v}" ;;
+                  *) echo "::error::release tags must be named desktop-v<MAJOR.MINOR.PATCH>, got '$REF_NAME'"; exit 1 ;;
+                esac
+              fi
+              ;;
+          esac
+
+          if [ "$channel" = "production" ]; then
+            if [ -z "$version" ]; then
+              echo "::error::a production release needs a desktop-v<version> tag: there is no version to publish from a bare branch"
+              exit 1
+            fi
+            # The installer lives on the GitHub Release, so the manifest can point
+            # at a stable public HTTPS URL instead of a blob in the repository.
+            download_url="https://github.com/$REPOSITORY/releases/download/$REF_NAME/ParadoxSetup.exe"
+            case "$publish" in true|True|TRUE) publish=true ;; *) publish=false ;; esac
+          else
+            publish=false
+          fi
+
+          {
+            echo "channel=$channel"
+            echo "version=$version"
+            echo "publish=$publish"
+            echo "download-url=$download_url"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Desktop Agent"
+            echo "- channel: \`$channel\`"
+            echo "- version: \`${version:-(from pc-agent/agent.py)}\`"
+            echo "- will publish: \`$publish\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  unit-tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run the desktop tests
+        run: python -m unittest discover -s desktop/tests -t desktop -v
+
+  build-development:
+    name: Build development installer
+    needs: config
+    if: needs.config.outputs.channel == 'development'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/build-desktop
+        with:
+          channel: development
+
+  build-release:
+    name: Build release installer
+    needs: config
+    if: needs.config.outputs.channel == 'production'
+    runs-on: windows-latest
+    # Production credentials live here, and a required reviewer on this
+    # environment gates every official build.
+    environment: desktop-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/build-desktop
+        with:
+          channel: production
+          version: ${{ needs.config.outputs.version }}
+          api-url: ${{ vars.PARADOX_API_URL }}
+          download-url: ${{ needs.config.outputs.download-url }}
+          publisher: ${{ vars.PARADOX_SIGN_PUBLISHER }}
+          pfx-base64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          pfx-password: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+
+  # Publication is its own job, with its own permissions, and it runs only when
+  # the release was explicitly authorized. Build jobs cannot write to the repo.
+  publish:
+    name: Publish the official release
+    needs: [config, build-release]
+    if: needs.config.outputs.channel == 'production' && needs.config.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: desktop-production
+    permissions:
+      contents: write
+    env:
+      DOWNLOAD_URL: ${{ needs.config.outputs.download-url }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that this account may publish
+        env:
+          ALLOWED: ${{ vars.PARADOX_RELEASE_OWNERS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ALLOWED" ]; then
+            echo "::error::PARADOX_RELEASE_OWNERS is not set; list the GitHub usernames allowed to publish, comma separated"
+            exit 1
+          fi
+          case ",$ALLOWED," in
+            *",$GITHUB_ACTOR,"*) echo "$GITHUB_ACTOR may publish" ;;
+            *) echo "::error::$GITHUB_ACTOR is not in PARADOX_RELEASE_OWNERS"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download what the build verified
+        uses: actions/download-artifact@v4
+        with:
+          name: paradox-desktop-production
+          path: desktop/out/release
+
+      - name: Re-check the artifact before it is published
+        run: |
+          set -euo pipefail
+          test -f desktop/out/release/desktop.json
+          python desktop/verify.py --channel production \
+            --artifacts desktop/out/release --skip-artifacts
+          echo "the manifest matches the exact bytes that will be published"
+
+      - name: Attach the installer to the tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            desktop/out/release/ParadoxSetup.exe
+            desktop/out/release/ParadoxSetup.exe.sha256
+          fail_on_unmatched_files: true
+
+      - name: Wait for the download URL to answer
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            code=$(curl -s -o /dev/null -L -w '%{http_code}' "$DOWNLOAD_URL" || true)
+            if [ "$code" = "200" ]; then
+              echo "the installer is reachable at $DOWNLOAD_URL"
+              exit 0
+            fi
+            echo "attempt $attempt: $code"
+            sleep 6
+          done
+          echo "::error::the release asset does not answer at $DOWNLOAD_URL; the manifest was not published"
+          exit 1
+
+      - name: Publish the manifest the site serves
+        run: |
+          set -euo pipefail
+          mkdir -p public/downloads
+          cp desktop/out/release/desktop.json public/downloads/desktop.json
+          git config user.name "Paradox Release"
+          git config user.email "release@users.noreply.github.com"
+          git add public/downloads/desktop.json
+          if git diff --cached --quiet; then
+            echo "the published manifest is already current"
+            exit 0
+          fi
+          git commit -m "release: Desktop Agent $TAG"
+          git push

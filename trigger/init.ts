@@ -1,0 +1,44 @@
+import * as Sentry from "@sentry/node"
+import { tasks } from "@trigger.dev/sdk"
+
+import { logAiProviderConfiguration } from "@/lib/ai/provider-registry"
+
+// Loaded by Trigger.dev before any task runs. Errors and logs only: Trigger.dev
+// traces the runs itself, and Sentry's default integrations would fight it for
+// OpenTelemetry.
+Sentry.init({
+  defaultIntegrations: false,
+  // The same variable the Next.js app reads (sentry.server.config.ts), so both
+  // report to one project. It has to be set in Trigger.dev too.
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  environment:
+    process.env.NODE_ENV === "production" ? "production" : "development",
+})
+
+// Tasks call models outside Next.js, so the provider startup report is emitted
+// here too: names of ready providers and of missing variables, never values.
+logAiProviderConfiguration()
+
+// Logs are sent in batches, and the process can be frozen or gone as soon as
+// the run ends or starts waiting
+tasks.onComplete(async () => {
+  await Sentry.flush(2000)
+})
+tasks.onWait(async () => {
+  await Sentry.flush(2000)
+})
+
+// Fires once a run has used up its retries. The payload is left out, as a
+// chat's payload is the person's messages.
+tasks.onFailure(async ({ error, ctx }) => {
+  Sentry.captureException(error, {
+    tags: {
+      "trigger.task": ctx.task.id,
+      "trigger.run": ctx.run.id,
+    },
+    extra: { ctx },
+  })
+
+  // The process can be frozen or gone as soon as the run ends
+  await Sentry.flush(2000)
+})

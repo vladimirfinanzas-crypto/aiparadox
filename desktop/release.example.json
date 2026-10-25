@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "file": "ParadoxSetup-1.0.0.exe",
+  "os": "Windows 10/11",
+  "architecture": "x64",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "bytes": 48234496,
+  "releasedAt": "2026-10-22T12:00:00.000Z",
+  "minimumAppVersion": "0.0.1",
+  "notes": "First public build."
+}

@@ -1,0 +1,145 @@
+# Builds the Desktop Agent on Windows. Used by both channels so the steps are
+# written once; the workflow decides which inputs it may pass.
+#
+# It never publishes: publication is a separate, explicitly authorized job.
+
+name: Build Desktop Agent
+description: Validate the release configuration, build, sign and verify the Windows installer.
+
+inputs:
+  channel:
+    description: development (no certificate needed) or production (certificate required)
+    required: true
+  version:
+    description: MAJOR.MINOR.PATCH for an official release; empty stamps the build
+    required: false
+    default: ""
+  api-url:
+    description: Server the installed agent connects to
+    required: false
+    default: ""
+  download-url:
+    description: Optional https address where the installer will be hosted
+    required: false
+    default: ""
+  publisher:
+    description: Expected certificate subject for a production release
+    required: false
+    default: ""
+  pfx-base64:
+    description: Base64 of the code-signing PFX (production only)
+    required: false
+    default: ""
+  pfx-password:
+    description: Password of that PFX (production only, never printed)
+    required: false
+    default: ""
+
+outputs:
+  installer:
+    description: File name of the built installer
+    value: ${{ steps.package.outputs.installer }}
+  sha256:
+    description: SHA-256 of the final, signed installer
+    value: ${{ steps.package.outputs.sha256 }}
+  signature:
+    description: Authenticode state Windows reported for the installer
+    value: ${{ steps.package.outputs.signature }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Prepare the signing certificate
+      shell: powershell
+      env:
+        PFX_BASE64: ${{ inputs.pfx-base64 }}
+        PFX_PASSWORD: ${{ inputs.pfx-password }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $path = Join-Path $env:RUNNER_TEMP "paradox-signing.pfx"
+        if (-not [string]::IsNullOrWhiteSpace($env:PFX_BASE64)) {
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_BASE64))
+          "PARADOX_SIGN_PFX=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+        if (-not [string]::IsNullOrEmpty($env:PFX_PASSWORD)) {
+          "PARADOX_SIGN_PASSWORD=$env:PFX_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+
+    - name: Validate configuration
+      shell: powershell
+      env:
+        PARADOX_BUILD_CHANNEL: ${{ inputs.channel }}
+        PARADOX_API_URL: ${{ inputs.api-url }}
+        PARADOX_SIGN_PUBLISHER: ${{ inputs.publisher }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $args = @("--check", "--channel", $env:PARADOX_BUILD_CHANNEL)
+        if ("${{ inputs.version }}") { $args += @("--version", "${{ inputs.version }}") }
+        if ($env:PARADOX_API_URL) { $args += @("--api", $env:PARADOX_API_URL) }
+        python desktop/package.py @args
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Build, sign and verify
+      id: package
+      shell: powershell
+      env:
+        PARADOX_BUILD_CHANNEL: ${{ inputs.channel }}
+        PARADOX_API_URL: ${{ inputs.api-url }}
+        PARADOX_SIGN_PUBLISHER: ${{ inputs.publisher }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $args = @("--channel", $env:PARADOX_BUILD_CHANNEL, "--no-publish")
+        if ("${{ inputs.version }}") { $args += @("--version", "${{ inputs.version }}") }
+        if ($env:PARADOX_API_URL) { $args += @("--api", $env:PARADOX_API_URL) }
+        if ("${{ inputs.download-url }}") { $args += @("--download-url", "${{ inputs.download-url }}") }
+        python desktop/package.py @args
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        $manifestName = if ($env:PARADOX_BUILD_CHANNEL -eq "production") { "desktop.json" } else { "desktop-dev.json" }
+        $manifest = Get-Content "desktop/out/release/$manifestName" | ConvertFrom-Json
+        "installer=$($manifest.file)" >> $env:GITHUB_OUTPUT
+        "sha256=$($manifest.sha256)" >> $env:GITHUB_OUTPUT
+        "signature=$($manifest.signature.status)" >> $env:GITHUB_OUTPUT
+        "version=$($manifest.version)" >> $env:GITHUB_OUTPUT
+
+    # The production gates are asserted on Windows, where Authenticode can be
+    # read: a manifest that says "verified" is not enough on its own.
+    - name: Assert the release gates
+      if: inputs.channel == 'production'
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+        $manifest = Get-Content "desktop/out/release/desktop.json" | ConvertFrom-Json
+        $installer = Join-Path "desktop/out/release" $manifest.file
+        if ($manifest.channel -ne "production") { throw "expected a production manifest, got '$($manifest.channel)'" }
+        if ($manifest.signature.status -ne "verified") { throw "the artifact is not validly signed: $($manifest.signature.status)" }
+        if (-not $manifest.signed) { throw "the manifest does not mark the artifact as signed" }
+        if (-not $manifest.sha256 -or $manifest.sha256.Length -ne 64) { throw "the manifest has no SHA-256" }
+        $signature = Get-AuthenticodeSignature $installer
+        if ($signature.Status -ne "Valid") { throw "Windows reports the signature as '$($signature.Status)'" }
+        $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+        if ($hash -ne $manifest.sha256) { throw "the published hash does not match the file" }
+        Write-Host "signed by $($signature.SignerCertificate.Subject)"
+
+    - name: Upload the artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: paradox-desktop-${{ inputs.channel }}
+        path: |
+          desktop/out/release/ParadoxSetup*.exe
+          desktop/out/release/ParadoxSetup*.exe.sha256
+          desktop/out/release/desktop.json
+          desktop/out/release/desktop-dev.json
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Remove the signing certificate
+      if: always()
+      shell: powershell
+      run: |
+        $path = Join-Path $env:RUNNER_TEMP "paradox-signing.pfx"
+        if (Test-Path $path) { Remove-Item $path -Force }

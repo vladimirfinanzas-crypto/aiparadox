@@ -1,0 +1,49 @@
+.gradient-text {
+  display: inline-block;
+  font-weight: 600;
+  background: linear-gradient(
+    var(--gt-angle, 90deg),
+    var(--gt-colors, #5227FF, #FF9FFC, #B497CF)
+  );
+  background-size: var(--gt-scale, 300%) 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-background-clip: text;
+  filter: drop-shadow(0 0 calc(var(--gt-glow, 0) * 8px) color-mix(in srgb, var(--gt-colors, #5227FF) 60%, transparent));
+  animation: gradient-flow var(--gt-speed, 8s) infinite alternate;
+  will-change: background-position;
+}
+
+.gradient-text--linear {
+  animation-timing-function: ease-in-out;
+}
+
+.gradient-text--flow {
+  animation-name: gradient-flow-blobs;
+}
+
+.gradient-text--conic {
+  animation-name: gradient-conic;
+}
+
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+@keyframes gradient-flow-blobs {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes gradient-conic {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 100% 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gradient-text {
+    animation: none;
+    background-position: 0% 50%;
+  }
+}

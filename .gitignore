@@ -1,0 +1,64 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+# .env.example holds names and comments only: it is safe to commit.
+!.env.example
+
+# local secrets / QA scratch (never commit a key file or lint reports)
+.openrouter_key.txt
+eslint-qa.*
+*.log
+.dev-worker.lock
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+.clerk/
+.neon
+
+.trigger
+/freebuff-sites-build/
+/.open-next/
+/.wrangler/
+
+# Desktop Agent build artifacts (the official release manifest is committed, the
+# binaries are produced by `npm run desktop:package`)
+/desktop/.venv
+/desktop/build
+/desktop/dist
+/desktop/out
+/desktop/installer/build_info.json
+/public/downloads/*.exe
+/public/downloads/*.sha256
+# A development build is a local test artifact: it is regenerated, and it must
+# never arrive in a deployment as if it were the official release.
+/public/downloads/desktop-dev.json
