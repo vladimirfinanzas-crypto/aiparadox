@@ -1,6 +1,10 @@
 import { defineConfig } from "drizzle-kit"
+import { existsSync } from "node:fs"
 
-process.loadEnvFile(".env.local")
+// Deploys provide environment variables directly; this file is only for local use.
+if (existsSync(".env.local")) {
+  process.loadEnvFile(".env.local")
+}
 
 export default defineConfig({
   schema: "./db/schema.ts",

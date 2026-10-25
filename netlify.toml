@@ -1,0 +1,8 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # These are public configuration identifiers, not authentication credentials.
+  # Keep secret scanning enabled for all other environment variables and files.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_RUNTIME,TRIGGER_PROJECT_REF,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,NEXT_PUBLIC_SENTRY_DSN"
