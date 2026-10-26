@@ -64,6 +64,7 @@ node scripts/apply-migration.mjs drizzle/0004_automations.sql
 node scripts/apply-migration.mjs drizzle/0005_automation_step_unique.sql
 node scripts/apply-migration.mjs drizzle/0006_workspace_versions.sql
 node scripts/apply-migration.mjs drizzle/0007_integration_center.sql
+node scripts/apply-migration.mjs drizzle/0008_role_models.sql
 
 # 4. App + worker de Trigger.dev (dos terminales)
 npm run dev          # Next.js en http://localhost:3000
@@ -105,9 +106,9 @@ La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin c
 ## Base de datos y migraciones
 
 - Esquema: `db/schema.ts` (Drizzle). Todas las tablas llevan `user_id` y las consultas de `queries/` filtran por el usuario de la sesión.
-- Migraciones SQL versionadas en `drizzle/` (`0000`…`0007`), **aditivas y re-ejecutables** (`if not exists` / `on conflict`).
+- Migraciones SQL versionadas en `drizzle/` (`0000`…`0008`), **aditivas y re-ejecutables** (`if not exists` / `on conflict`).
 - El runner es `scripts/apply-migration.mjs <archivo.sql>` (usa la conexión directa, `DATABASE_URL_UNPOOLED`).
-- ⚠️ `drizzle/meta/_journal.json` solo registra `0000`: **`npm run db:migrate` (drizzle-kit) no aplica `0001`–`0007`**. Aplica esos archivos con el runner, en orden, como muestra la sección anterior. `npm run db:generate` sigue siendo el camino para *crear* una migración nueva a partir de cambios de esquema.
+- ⚠️ `drizzle/meta/_journal.json` solo registra `0000`: **`npm run db:migrate` (drizzle-kit) no aplica `0001`–`0008`**. Aplica esos archivos con el runner, en orden, como muestra la sección anterior. `npm run db:generate` sigue siendo el camino para *crear* una migración nueva a partir de cambios de esquema.
 - **Antes de un cambio que pueda tocar datos**: copia de seguridad (`pg_dump "$DATABASE_URL" > respaldo.sql`) y restaura con `psql < respaldo.sql`. No borres ni recrees tablas como solución.
 
 ---
@@ -136,6 +137,10 @@ Un solo lugar para proveedores, APIs y herramientas, agrupado por categoría
   `ai_provider_settings`; `trigger/chat.ts` lee esa selección una vez por turno y
   se la pasa a `chatModel`/`pickAgent`. No hay un segundo sistema de proveedores.
   La lista del operador (`PARADOX_DISABLED_PROVIDERS`) siempre gana.
+- **Modelo por rol.** El panel «Runtime de modelos» permite poner un modelo
+  primero para cada rol (`ai_model_preferences`); es un reordenamiento de la
+  escalera, así que el fallback sigue intacto y solo se ofrecen modelos de los
+  proveedores activos.
 - **Configurado ≠ conectado.** Una API o un servidor MCP guardado se muestra
   como «configurada, sin verificar» hasta que «Probar» hace una petición real.
 - **APIs personalizadas**: URL validada contra la red real (sin `localhost`,

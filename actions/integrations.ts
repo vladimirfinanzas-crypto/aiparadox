@@ -10,7 +10,10 @@ import { db } from "@/db"
 import { browserbaseClient } from "@/lib/browserbase"
 import { customIntegrations, mcpServers } from "@/db/schema"
 import { probeProviderById } from "@/lib/ai-health"
-import { saveProviderSelection } from "@/lib/ai/provider-settings"
+import {
+  saveModelPreference,
+  saveProviderSelection,
+} from "@/lib/ai/provider-settings"
 import { PROVIDER_IDS, type ProviderId } from "@/lib/ai/types"
 import {
   AUTH_TYPES,
@@ -178,6 +181,48 @@ export async function saveProviderSelectionAction(input: {
     })
     return { ok: false, error: "No se pudo guardar la selección." }
   }
+}
+
+/**
+ * Picks the model that leads one role, or clears it with `null`.
+ *
+ * The value arrives as `provider:modelId` because a model id can contain slashes
+ * and colons. `saveModelPreference` re-validates it against the catalogue the
+ * person has access to, so this action only parses.
+ */
+export async function saveRoleModelAction(
+  role: string,
+  value: string | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const userId = await requireUser()
+  if (!userId) return { ok: false, error: "Inicia sesión." }
+
+  if (value === null || value === "") {
+    const cleared = await saveModelPreference(userId, role, null)
+    if (!cleared.ok) return cleared
+    revalidatePath("/settings/integrations")
+    return { ok: true }
+  }
+
+  const separator = value.indexOf(":")
+  if (separator <= 0 || separator === value.length - 1) {
+    return { ok: false, error: "Modelo no válido." }
+  }
+
+  const saved = await saveModelPreference(userId, role, {
+    provider: value.slice(0, separator) as ProviderId,
+    modelId: value.slice(separator + 1),
+  })
+
+  if (!saved.ok) return saved
+
+  revalidatePath("/settings/integrations")
+  Sentry.logger.info("Role model chosen", {
+    "user.id": userId,
+    "ai.role": role,
+  })
+
+  return { ok: true }
 }
 
 /** One real call to one provider, from the settings page. */

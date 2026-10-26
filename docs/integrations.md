@@ -11,6 +11,7 @@ usuario y se guarda en su fila de la base de datos).
 |---|---|---|
 | Proveedores de IA (OpenRouter, Gemini, Cerebras, Groq, Workers AI) | entorno (`*_API_KEY`) | operador |
 | Orden y opt-out de proveedores | `ai_provider_settings` (por usuario) | usuario |
+| Modelo que lidera cada rol | `ai_model_preferences` (por usuario) | usuario |
 | Trigger.dev, Postgres/Neon, Clerk, Sentry, Resend | entorno | operador |
 | Browserbase | entorno (`BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`) | operador |
 | Zernio | entorno (`ZERNIO_API_KEY`) + perfil por usuario | operador + usuario |
@@ -37,6 +38,21 @@ el orden de candidatos. La selección del usuario se lee **una vez por turno** e
 
 Los proveedores añadidos al producto después de que alguien guardara su lista se
 añaden al final, de modo que guardar nunca «pierde» un proveedor.
+
+### Modelo por rol
+
+El panel «Runtime de modelos» deja elegir el modelo que va primero para cada rol
+(general, navegador, código, razonamiento, visión, creativo, enrutado). La lista
+ofertada sale de `catalogForRole(rol, selección)`: no se puede elegir un modelo de
+un proveedor desactivado, ni uno que ya no exista.
+
+Al guardar se guarda solo la identidad (`ai_model_preferences`), y en cada
+llamada `withModelPreference` **mueve** ese candidato al principio de la escalera
+sin quitar ningún otro: si el modelo elegido falla o no cumple los requisitos de
+la llamada (por ejemplo, una imagen en un modelo sin visión), el fallback sigue
+funcionando. «Automático» borra la fila y devuelve el rol a la escalera normal.
+Esto es distinto de `PARADOX_MODEL_*`, que es el valor por defecto del operador
+para todos.
 
 ## Estados: configurado no es conectado
 
@@ -106,3 +122,7 @@ Con esto, MCP es **extensible y real para HTTP**, pero no un cliente MCP complet
   «endpoint de prueba» distinto.
 - Los cooldowns de proveedores viven en memoria del proceso (ver
   `docs/ai-providers.md`); el centro de integraciones no los persiste.
+- La preferencia de modelo es por rol, no por agente: dos agentes con el mismo
+  rol comparten el modelo elegido.
+- Cambiar de proveedor desactivando el que lidera un rol no borra la preferencia:
+  queda inactiva (filtrada por el catálogo) hasta que se reactive.

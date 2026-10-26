@@ -27,6 +27,7 @@ import {
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { catalogForRole } from "@/lib/ai/models"
 import { isDeviceOnline, listDevices } from "@/lib/desktop-devices"
 import { MODEL_CONFIG, MODEL_LADDERS, type ModelRole } from "@/lib/model"
 import { getIntegrationCenter } from "@/queries/integrations"
@@ -186,6 +187,16 @@ export default async function SettingsIntegrationsPage() {
             role,
             primary: MODEL_CONFIG[role],
             ladder: MODEL_LADDERS[role],
+            // The selectable models are the router's own plan for this person:
+            // a model from a provider they disabled can never be chosen.
+            candidates: catalogForRole(role, center.selection)
+              .slice(0, 12)
+              .map((candidate) => ({
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                label: `${candidate.provider}/${candidate.modelId}`,
+              })),
+            preference: center.preferences[role] ?? null,
           }))}
         />
       </Section>
