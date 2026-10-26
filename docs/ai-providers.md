@@ -111,7 +111,7 @@ it.
 | `fast` | `nvidia/nemotron-3.5-lightning:free` | `gemini-3.5-flash-lite` | `gpt-oss-120b` | `openai/gpt-oss-20b` | `@cf/zai-org/glm-4.7-flash` |
 | `code` | `nvidia/nemotron-3-ultra-550b-a55b:free` | `gemini-3.6-flash` | `gpt-oss-120b` | `openai/gpt-oss-120b` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 | `reasoner` | `nvidia/nemotron-3-ultra-550b-a55b:free` | `gemini-3.6-flash` | `gpt-oss-120b` | `openai/gpt-oss-120b` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
-| `creative` | `minimax/minimax-m3.1-flash:free` | `gemini-3.6-flash` | `qwen-3.8-27b` | `openai/gpt-oss-120b` | `@cf/zai-org/glm-4.7-flash` |
+| `creative` | `dots-studio/dots-3-note-preview:free` | `gemini-3.6-flash` | `qwen-3.8-27b` | `openai/gpt-oss-120b` | `@cf/zai-org/glm-4.7-flash` |
 | `vision` | `nvidia/nemotron-3.5-super-vl:free` | `gemini-3.6-flash` | `qwen-3.8-27b` | `qwen/qwen3.8-27b` | `@cf/meta/llama-4-scout-17b-16e-instruct` |
 | `evaluator` | `dots-studio/dots-3-note-preview:free` | `gemini-3.1-flash-lite` | `gpt-oss-120b` | `openai/gpt-oss-20b` | — (JSON mode only) |
 
@@ -120,6 +120,14 @@ the table shows the primary of each.
 
 Capability notes:
 
+- **OpenRouter** — every id was checked against the live catalogue
+  (`https://openrouter.ai/api/v1/models`, October 2026). `nemotron-3-ultra`,
+  `nemotron-3.5-lightning` and `gemma-4-31b-it` advertise `tools` but **not**
+  `structured_outputs` (strict `json_schema`); only `dots-3-note-preview` and
+  `nemotron-3.5-super-vl` do. The catalog marks the first three for loose JSON
+  only, so a strict-schema call is never planned onto them — they stay fully
+  usable for ordinary chat turns. `gemma-4-31b-it` replaced MiniMax M3.1 Flash,
+  whose free variant was retired.
 - **Gemini** — `gemini-3.6-flash` leads the general, code and vision ladders;
   `gemini-3.8-flash` is the second rung because live checks returned "this model
   is currently experiencing high demand" from it repeatedly, while 3.6 answered
@@ -175,6 +183,12 @@ Structured output is requested only where it is used: `evaluator` for routing
 and `structuredChatModel()` for drafting agents. Ordinary chat and agent turns
 need tools, not a schema, which is why a tools-only model such as Workers AI can
 still answer a conversation.
+
+The evaluator's rungs are `2s, 1s, 1s` on purpose: `pickAgent` gives the whole
+routing decision 4.5s (`ROUTING_DEADLINE_MS`), so rungs adding up to more than
+that could never reach a fallback — the outer signal aborted the ladder during
+its first attempt. `lib/ai/__tests__/routing-budget.test.ts` keeps that invariant
+true if either number changes.
 
 ## Fallback rules
 
@@ -262,8 +276,33 @@ Startup logs one line naming configured and missing providers:
   configuration, the routing plan for each role (including capability gaps),
   quota state, and today's OpenRouter free allowance.
 - `GET /api/ai/health?probe=1` — additionally sends one tiny completion per
-  OpenRouter model. This spends a few free requests, so it is opt-in.
+  configured **provider** (through that provider's own adapter, so a cooldown
+  learned earlier cannot hide its real state) and per OpenRouter model. This
+  spends a few free requests, so it is opt-in.
 - Settings → Integrations → AI models shows the plan and can run the probe.
+
+The probe is **bounded**: a 4 s cap per call and an 8 s budget for the whole
+phase, so the request still fits in a Netlify synchronous function (a few
+seconds). Anything that does not fit comes back with `status: "skipped"` and
+`error: "probe budget spent"` instead of a 502 with no diagnosis. The budget is
+reported in the response as `probeBudgetMs`.
+
+### What the person is told when nothing answers
+
+The router's final error is not one sentence for every cause. Its `reason` field
+(and the message) distinguishes four cases, because they need different actions:
+
+| Reason | Message says | What to do |
+| --- | --- | --- |
+| `none_configured` | "No AI provider is configured…" | Set a provider key **in the deployment and in the Trigger.dev worker**. |
+| `auth_failed` | "Every configured AI provider rejected its credentials…" | Replace the keys that answer 401. Retrying cannot fix it. |
+| `no_eligible_model` | "No configured model can run the <role> request: every catalogued model lacks …" | Fix the catalog, or pin a capable model with `PARADOX_MODEL_<ROLE>`. |
+| `all_failed` | "No AI provider could answer the <role> request right now…" | Capacity/quota. Trying again later is the right move. |
+
+The chat panel maps these to its own toasts (`aiFailureCodeOf` in
+`lib/ai/fallback.ts`), so a missing variable is never described as "the model did
+not answer". A missing `TRIGGER_SECRET_KEY` is caught in the server action before
+any model is reached, and says so.
 
 ## Tests
 
@@ -272,6 +311,11 @@ npm test        # mocked providers, no quota is spent
 npm run typecheck
 npm run lint
 npm run build
+
+# Opt-in: one real, tiny completion per configured provider. Verifies the model
+# ids and the credentials against the live APIs; a rate limit is reported, not
+# failed. Never runs as part of `npm test`.
+PARADOX_LIVE_PROVIDER_TESTS=1 npx vitest run lib/ai/__tests__/providers.live.test.ts
 ```
 
 The suite covers: a successful OpenRouter request, the `free-models-per-day`
@@ -281,9 +325,8 @@ tool/structured-output filtering, vision routing, stream failure before and afte
 first output, client cancellation, concurrent requests, and the Workers AI
 numeric-chunk repair. It runs entirely against mocks and spends no real quota.
 
-Live verification is a separate, manual step (a throwaway script against the real
-keys), so it can never spend a free tier in CI. A production `next start` boot
-with all keys set logs:
+Live verification is the opt-in test above, so it can never spend a free tier in
+CI. A production `next start` boot with all keys set logs:
 
 ```
 [ai] AI providers: openrouter=ready, gemini=ready, cerebras=ready, groq=ready, cloudflare=ready
@@ -306,6 +349,18 @@ A real `chatModel("chat")` turn with OpenRouter's free quota exhausted answered
 from Gemini (`FALLBACK OK`), which is the failure mode this change exists for.
 A second request in the same process made zero OpenRouter calls, proving the
 daily cooldown prevents retrying an exhausted key.
+
+Verification method in this pass, so the claims above are traceable:
+
+- Every model id was re-checked against **OpenRouter's live catalogue endpoint**
+  (`/api/v1/models`, including each model's `supported_parameters`) and against
+  the four other providers' official documentation. All ids exist; three
+  OpenRouter models were over-claiming strict JSON and were corrected.
+- **Retry stacking was measured and ruled out.** The AI SDK defaults to
+  `maxRetries: 2`, which would multiply a 6-call ladder by three. It does not
+  fire here: the router throws its own `AllProvidersFailedError`, which is not an
+  `APICallError`, so the SDK does not consider it retryable. One routed request
+  is one bounded ladder (`PARADOX_AI_MAX_PROVIDER_CALLS`, default 6).
 
 Remaining notes:
 
