@@ -48,27 +48,49 @@ export function defaultSelection(): ResolvedProviderSelection {
 }
 
 /**
- * The person's selection, already merged with the environment's rules.
+ * Postgres `undefined_table`, raised while the integration-centre migrations have
+ * not been applied to a database yet.
  *
- * Rows are only written when someone saves, so an untouched account does no
- * query work beyond one empty read.
+ * It must not take the chat down: the readers fall back to the environment's
+ * behaviour and say why in the logs. The writers do not catch it — a save that did
+ * not happen must fail out loud rather than report success.
  */
-export async function getProviderSelection(
+function isMissingTable(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "42P01"
+}
+
+/**
+ * The person's selection, already merged with the environment's rules, plus
+ * whether the tables it lives in exist yet.
+ */
+export async function readProviderSelection(
   userId: string
-): Promise<ResolvedProviderSelection> {
-  const rows = await db
-    .select({
-      provider: aiProviderSettings.provider,
-      enabled: aiProviderSettings.enabled,
-      position: aiProviderSettings.position,
-    })
-    .from(aiProviderSettings)
-    .where(eq(aiProviderSettings.userId, userId))
-    .orderBy(asc(aiProviderSettings.position))
+): Promise<{ selection: ResolvedProviderSelection; tablesReady: boolean }> {
+  let rows: { provider: string; enabled: boolean; position: number }[]
+
+  try {
+    rows = await db
+      .select({
+        provider: aiProviderSettings.provider,
+        enabled: aiProviderSettings.enabled,
+        position: aiProviderSettings.position,
+      })
+      .from(aiProviderSettings)
+      .where(eq(aiProviderSettings.userId, userId))
+      .orderBy(asc(aiProviderSettings.position))
+  } catch (error) {
+    if (!isMissingTable(error)) throw error
+    console.warn(
+      "[provider-settings] ai_provider_settings does not exist yet; using the environment defaults. Apply drizzle/0007_integration_center.sql."
+    )
+    return { selection: defaultSelection(), tablesReady: false }
+  }
 
   const envDisabled = disabledProviders()
 
-  if (rows.length === 0) return defaultSelection()
+  if (rows.length === 0) {
+    return { selection: defaultSelection(), tablesReady: true }
+  }
 
   const ordered = knownOnly(rows.map((row) => row.provider))
   const chosenDisabled = knownOnly(
@@ -80,9 +102,24 @@ export async function getProviderSelection(
   const rest = providerOrder().filter((id) => !ordered.includes(id))
 
   return {
-    order: [...ordered, ...rest],
-    disabled: [...new Set([...envDisabled, ...chosenDisabled])],
+    selection: {
+      order: [...ordered, ...rest],
+      disabled: [...new Set([...envDisabled, ...chosenDisabled])],
+    },
+    tablesReady: true,
   }
+}
+
+/**
+ * The person's selection, already merged with the environment's rules.
+ *
+ * Rows are only written when someone saves, so an untouched account does no
+ * query work beyond one empty read.
+ */
+export async function getProviderSelection(
+  userId: string
+): Promise<ResolvedProviderSelection> {
+  return (await readProviderSelection(userId)).selection
 }
 
 /**
@@ -137,14 +174,24 @@ const ROLES = new Set<string>(MODEL_ROLES)
 export async function getModelPreferences(
   userId: string
 ): Promise<Partial<Record<ModelRole, RoleModelPreference>>> {
-  const rows = await db
-    .select({
-      role: aiModelPreferences.role,
-      provider: aiModelPreferences.provider,
-      modelId: aiModelPreferences.modelId,
-    })
-    .from(aiModelPreferences)
-    .where(eq(aiModelPreferences.userId, userId))
+  let rows: { role: string; provider: string; modelId: string }[]
+
+  try {
+    rows = await db
+      .select({
+        role: aiModelPreferences.role,
+        provider: aiModelPreferences.provider,
+        modelId: aiModelPreferences.modelId,
+      })
+      .from(aiModelPreferences)
+      .where(eq(aiModelPreferences.userId, userId))
+  } catch (error) {
+    if (!isMissingTable(error)) throw error
+    console.warn(
+      "[provider-settings] ai_model_preferences does not exist yet; every role uses its ladder. Apply drizzle/0008_role_models.sql."
+    )
+    return {}
+  }
 
   if (rows.length === 0) return {}
 

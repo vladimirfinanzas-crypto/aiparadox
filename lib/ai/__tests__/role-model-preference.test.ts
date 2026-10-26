@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 const h = vi.hoisted(() => ({
   providerRows: [] as { provider: string; enabled: boolean; position: number }[],
   modelRows: [] as { role: string; provider: string; modelId: string }[],
+  /** Simulates a database where the migrations have not been applied. */
+  missingTable: false,
 }))
 
 vi.mock("@/db", () => {
@@ -23,6 +25,12 @@ vi.mock("@/db", () => {
           // `getModelPreferences` awaits `where(...)`; `getProviderSelection`
           // chains `.orderBy()`. Both are supported by one object.
           where: () => {
+            if (h.missingTable) {
+              // Postgres `undefined_table`, as node-postgres raises it
+              throw Object.assign(new Error("relation does not exist"), {
+                code: "42P01",
+              })
+            }
             const rows = rowsFor(table)
             return Object.assign(Promise.resolve(rows), {
               orderBy: async () => rows,
@@ -54,7 +62,9 @@ import {
   withModelPreference,
 } from "@/lib/ai/models"
 import {
+  defaultSelection,
   getModelPreferences,
+  readProviderSelection,
   saveModelPreference,
 } from "@/lib/ai/provider-settings"
 
@@ -64,6 +74,7 @@ const originalDisabled = process.env.PARADOX_DISABLED_PROVIDERS
 afterEach(() => {
   h.providerRows = []
   h.modelRows = []
+  h.missingTable = false
   if (originalOrder === undefined) delete process.env.PARADOX_PROVIDER_ORDER
   else process.env.PARADOX_PROVIDER_ORDER = originalOrder
   if (originalDisabled === undefined) delete process.env.PARADOX_DISABLED_PROVIDERS
@@ -173,6 +184,17 @@ describe("saveModelPreference", () => {
       provider: real!.provider,
       modelId: real!.modelId,
     })
+  })
+
+  it("survives a database where the migrations are not applied yet", async () => {
+    h.missingTable = true
+
+    // Chat must keep answering on the environment's defaults, and the settings
+    // page must be able to say "the tables are missing" instead of throwing.
+    await expect(getModelPreferences("user_1")).resolves.toEqual({})
+    const read = await readProviderSelection("user_1")
+    expect(read.tablesReady).toBe(false)
+    expect(read.selection).toEqual(defaultSelection())
   })
 
   it("drops a stored choice whose provider the operator disabled", async () => {
