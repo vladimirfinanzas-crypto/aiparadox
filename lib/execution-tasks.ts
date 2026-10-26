@@ -421,6 +421,32 @@ export async function recordBrowserSession(
 }
 
 /**
+ * Whether a cloud browser session belongs to this person.
+ *
+ * A Browserbase session id is the only key needed to fetch its recording, so
+ * anything that serves one (GET /api/replays/[sessionId]) must first prove the
+ * caller owns it. Ownership is recorded on the task that opened the session —
+ * never taken from the request.
+ */
+export async function userOwnsBrowserSession(
+  userId: string,
+  browserSessionId: string
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: executionTasks.id })
+    .from(executionTasks)
+    .where(
+      and(
+        eq(executionTasks.userId, userId),
+        eq(executionTasks.browserSessionId, browserSessionId)
+      )
+    )
+    .limit(1)
+
+  return Boolean(row)
+}
+
+/**
  * Closes every task of one conversation when its turn ends. Work does not
  * continue between turns, so a row left as `running` would be a lie in
  * Activity. A question that is still waiting for an answer is left alone: it

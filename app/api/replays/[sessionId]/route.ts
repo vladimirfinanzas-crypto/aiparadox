@@ -4,6 +4,7 @@ import { NotFoundError } from "@browserbasehq/sdk"
 
 import { browserbaseClient } from "@/lib/browserbase"
 import { PAYWALL_ENABLED } from "@/lib/billing"
+import { userOwnsBrowserSession } from "@/lib/execution-tasks"
 
 // Proxies a Browserbase session's replay so the browser can play it back. The
 // retrieval needs the secret API key, so it can only happen server-side — the
@@ -40,6 +41,20 @@ export async function GET(
       sessionId,
     })
     return new Response("Paid plan required", { status: 403 })
+  }
+
+  // A session id is a guessable handle to somebody else's recording: a browser
+  // session can show a signed-in mailbox or a bank page. Only the person whose
+  // task opened it may fetch it. Checked server-side against the task row, never
+  // against anything the request claims, and answered as "not found" so this
+  // route cannot be used to probe for other accounts' session ids.
+  const owned = await userOwnsBrowserSession(userId, sessionId)
+  if (!owned) {
+    Sentry.logger.warn("Session replay denied — not this user's session", {
+      userId,
+      sessionId,
+    })
+    return new Response("Not found", { status: 404 })
   }
 
   try {
