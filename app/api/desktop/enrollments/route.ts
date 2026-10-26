@@ -1,4 +1,5 @@
 import { createEnrollment } from "@/lib/desktop-devices"
+import { createThrottle } from "@/lib/throttle"
 
 // The local agent's first call: ask for a short code it can show the person.
 // Nothing is authorized by this call — the code only becomes a device once a
@@ -8,8 +9,9 @@ import { createEnrollment } from "@/lib/desktop-devices"
 //     -> { code, expiresAt, approvalPath }
 //
 // A tiny in-process throttle keeps one client from minting codes in a loop.
-const recent = new Map<string, number>()
-const THROTTLE_MS = 5_000
+// Bounded on purpose: an unbounded Map keyed by client address is a leak on a
+// long-running server, and this endpoint is the one an anonymous caller can hit.
+const throttle = createThrottle({ windowMs: 5_000, maxEntries: 5_000 })
 
 function clientKey(request: Request) {
   return (
@@ -20,15 +22,12 @@ function clientKey(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const key = clientKey(request)
-  const last = recent.get(key)
-  if (last && Date.now() - last < THROTTLE_MS) {
+  if (!throttle.allow(clientKey(request))) {
     return Response.json(
       { error: "Wait a few seconds before requesting another code." },
       { status: 429 }
     )
   }
-  recent.set(key, Date.now())
 
   let body: { deviceName?: string; os?: string } = {}
   try {
