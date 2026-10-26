@@ -434,15 +434,45 @@ function roleOverride(role: ModelRole): ModelCandidate | null {
   }
 }
 
-/** The candidates for one role, in routing order. */
-export function catalogForRole(role: ModelRole): ModelCandidate[] {
-  const disabled = disabledProviders()
-  const order = providerOrder()
+/**
+ * What a person chose in the integration centre, applied on top of the
+ * environment (see `lib/ai/provider-settings.ts`). Passed in rather than read
+ * here: this module must stay free of database access, and the chat task already
+ * knows whose turn it is.
+ */
+export type ProviderSelection = {
+  order?: readonly ProviderId[]
+  disabled?: readonly ProviderId[]
+}
+
+/**
+ * The candidates for one role, in routing order.
+ *
+ * `selection` narrows or reorders the providers for one person's turn. It can
+ * only skip providers, never add one: the operator's `PARADOX_DISABLED_PROVIDERS`
+ * always applies, because that is a server decision about a key the person
+ * cannot see or rotate.
+ */
+export function catalogForRole(
+  role: ModelRole,
+  selection?: ProviderSelection
+): ModelCandidate[] {
+  const disabled = new Set<ProviderId>([
+    ...disabledProviders(),
+    ...(selection?.disabled ?? []),
+  ])
+  const order =
+    selection?.order && selection.order.length > 0
+      ? [...selection.order]
+      : providerOrder()
   const candidates: ModelCandidate[] = []
 
   for (const provider of order) {
     if (disabled.has(provider)) continue
-    candidates.push(...BY_PROVIDER[provider][role])
+    const block = BY_PROVIDER[provider]
+    // A provider id from an old saved row that no longer exists is ignored
+    if (!block) continue
+    candidates.push(...block[role])
   }
 
   const backstop = backstopModel()
@@ -474,11 +504,13 @@ function dedupe(candidates: ModelCandidate[]): ModelCandidate[] {
 }
 
 /** Every model id the catalog can reach, once each. */
-export function catalogModelIds(): { provider: ProviderId; modelId: string }[] {
+export function catalogModelIds(
+  selection?: ProviderSelection
+): { provider: ProviderId; modelId: string }[] {
   const seen = new Set<string>()
   const ids: { provider: ProviderId; modelId: string }[] = []
   for (const role of MODEL_ROLES) {
-    for (const entry of catalogForRole(role)) {
+    for (const entry of catalogForRole(role, selection)) {
       const key = `${entry.provider}:${entry.modelId}`
       if (seen.has(key)) continue
       seen.add(key)

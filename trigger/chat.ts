@@ -20,6 +20,7 @@ import {
   createSocialTools,
   narrowTools,
 } from "@/lib/agent-tools"
+import { getProviderSelection } from "@/lib/ai/provider-settings"
 import { browserAvailability } from "@/lib/browser-adapters"
 import { closeConversationBrowsers } from "@/lib/browser-sessions"
 import { createExecutionEnvironmentTools } from "@/lib/execution-environment-tool"
@@ -502,6 +503,11 @@ export const chatAgent = chat
         : UNLIMITED_USAGE
       if (!usage || usage.remaining.ai <= 0) throw new Error(USAGE_LIMIT_ERROR)
 
+      // Which AI providers this person enabled in the integration centre, in
+      // their order. Read once per turn and handed to every model call below, so
+      // the settings page and the router are one system, not two.
+      const providerSelection = await getProviderSelection(row.userId)
+
       // The person never picks an agent. The router reads the message and hands
       // it to the agent whose job fits. A group chat keeps whoever the person
       // addressed, because a handoff is the group's own routing. When the chat's
@@ -511,7 +517,7 @@ export const chatAgent = chat
       const keepOrchestrator = !group && bot.role === ORCHESTRATOR_ROLE
       const decision = keepOrchestrator
         ? null
-        : await pickAgent(candidates, latestUserText(messages))
+        : await pickAgent(candidates, latestUserText(messages), providerSelection)
       const speaker = group && clientData?.botId ? bot : (decision?.bot ?? bot)
 
       // The team the orchestrator coordinates. It is always the account's own
@@ -644,7 +650,7 @@ export const chatAgent = chat
       })
 
       const streamed = streamText({
-        model: chatModel(speaker.kind),
+        model: chatModel(speaker.kind, providerSelection),
         system: buildInstructions(speaker, group, roster, toolInfo),
         messages,
         tools: liveTools,

@@ -825,3 +825,120 @@ export const automationApprovals = pgTable(
 )
 
 export type AutomationApproval = typeof automationApprovals.$inferSelect
+
+// ---------------------------------------------------------------------------
+// Integration centre — per-user configuration of providers and APIs.
+//
+// Everything here is scoped by `user_id` (Clerk id) and read only through the
+// session. Credentials are stored encrypted (`lib/secrets.ts`); the columns
+// below never hold a secret in clear text, and no query selects the ciphertext
+// into a client payload.
+// ---------------------------------------------------------------------------
+
+/** Which AI providers this person enabled, and in what order. */
+export const aiProviderSettings = pgTable(
+  "ai_provider_settings",
+  {
+    userId: text("user_id").notNull(),
+    // One of PROVIDER_IDS in lib/ai/types.ts
+    provider: text("provider").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    // Lower wins; the server action rewrites the whole list
+    position: integer("position").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.provider] }),
+  ]
+)
+
+export type AiProviderSetting = typeof aiProviderSettings.$inferSelect
+export type NewAiProviderSetting = typeof aiProviderSettings.$inferInsert
+
+/**
+ * An API the person added themselves.
+ *
+ * `status` distinguishes "the fields are saved" from "a request worked":
+ * `configured` is not a connection, and the UI never shows it as one.
+ */
+export const customIntegrations = pgTable(
+  "custom_integrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    // 'ai' | 'automation' | 'api' | 'communication' | 'social' | 'other'
+    category: text("category").notNull().default("other"),
+    baseUrl: text("base_url").notNull(),
+    // 'bearer' | 'header' | 'query' | 'basic' | 'none'
+    authType: text("auth_type").notNull().default("bearer"),
+    credentialCiphertext: text("credential_ciphertext"),
+    credentialHint: text("credential_hint"),
+    description: text("description"),
+    capabilities: jsonb("capabilities")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    // 'configured' | 'verified' | 'error'
+    status: text("status").notNull().default("configured"),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("custom_integrations_user_idx").on(table.userId, table.createdAt),
+  ]
+)
+
+export type CustomIntegration = typeof customIntegrations.$inferSelect
+export type NewCustomIntegration = typeof customIntegrations.$inferInsert
+
+/**
+ * An MCP endpoint the person added.
+ *
+ * `transport` is `http` only: this app runs in the cloud and never runs a local
+ * command on someone's machine. `tools` holds what the server itself listed, so
+ * an empty array means "nothing discovered yet", never "pretend it works".
+ */
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    transport: text("transport").notNull().default("http"),
+    url: text("url").notNull(),
+    // 'none' | 'bearer' | 'header'
+    authType: text("auth_type").notNull().default("none"),
+    credentialCiphertext: text("credential_ciphertext"),
+    credentialHint: text("credential_hint"),
+    enabled: boolean("enabled").notNull().default(true),
+    tools: jsonb("tools")
+      .$type<Array<{ name: string; description?: string }>>()
+      .notNull()
+      .default([]),
+    // 'unverified' | 'connected' | 'error'
+    status: text("status").notNull().default("unverified"),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("mcp_servers_user_idx").on(table.userId, table.createdAt),
+  ]
+)
+
+export type McpServer = typeof mcpServers.$inferSelect
+export type NewMcpServer = typeof mcpServers.$inferInsert

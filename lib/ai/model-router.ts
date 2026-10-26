@@ -15,6 +15,7 @@ import {
   ROLE_REQUIREMENTS,
   catalogForRole,
   missingCapabilities,
+  type ProviderSelection,
 } from "./models"
 import { logAiEvent, newRequestId, type AiLogEvent } from "./observability"
 import {
@@ -134,6 +135,12 @@ export type RoutedModelOptions = {
   requirements?: ModelRequirements
   /** Explicit plan, for tests or a caller that knows better. */
   candidates?: ModelCandidate[]
+  /**
+   * The person's provider order and opt-outs, from the integration centre. The
+   * router applies them on top of the environment, so there is exactly one
+   * selection/fallback system.
+   */
+  providerSelection?: ProviderSelection
   deps?: Partial<RouterDeps>
   /** Hard cap on provider calls for one request (default 6). */
   maxProviderCalls?: number
@@ -182,12 +189,15 @@ function buildPlan(
 
 export function planForRole(
   role: ModelRole,
-  options: Pick<RoutedModelOptions, "requirements" | "candidates"> = {}
+  options: Pick<
+    RoutedModelOptions,
+    "requirements" | "candidates" | "providerSelection"
+  > = {}
 ): RolePlan {
   return buildPlan(
     role,
     requirementsFor(role, options.requirements),
-    options.candidates ?? catalogForRole(role)
+    options.candidates ?? catalogForRole(role, options.providerSelection)
   )
 }
 
@@ -469,7 +479,11 @@ export function createRoutedModel(options: RoutedModelOptions): LanguageModel {
       ...options.requirements,
       ...(wantsVision && { vision: true }),
     })
-    return buildPlan(role, required, options.candidates ?? catalogForRole(role))
+    return buildPlan(
+      role,
+      required,
+      options.candidates ?? catalogForRole(role, options.providerSelection)
+    )
   }
 
   function emptyPlanError(plan: RolePlan, failures: FailedAttempt[]) {

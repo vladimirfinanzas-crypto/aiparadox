@@ -6,6 +6,7 @@ import {
   modelForAgentKind,
   modelRoleForAgentKind,
   modelRoles,
+  type ProviderSelection,
 } from "./ai/models"
 import { createRoutedModel } from "./ai/model-router"
 import type { ModelRole } from "./ai/types"
@@ -41,18 +42,19 @@ export function getFreeModelTypes(): ModelRole[] {
  * The model for one role, with its cross-provider fallback ladder and
  * deadlines. `streamText` and `generateText` take it like any provider model.
  */
-export function roleModel(role: ModelRole) {
-  return createRoutedModel({ role })
+export function roleModel(role: ModelRole, selection?: ProviderSelection) {
+  return createRoutedModel({ role, ...(selection && { providerSelection: selection }) })
 }
 
 /**
  * The model an agent kind talks to: the chat model for conversation, the fast
  * one for browser steps, the vision one for screen work.
  */
-export function chatModel(agentKind?: string) {
+export function chatModel(agentKind?: string, selection?: ProviderSelection) {
   return createRoutedModel({
     role: modelRoleForAgentKind(agentKind),
     ...(agentKind ? { agentKind } : {}),
+    ...(selection && { providerSelection: selection }),
   })
 }
 
@@ -60,8 +62,11 @@ export function chatModel(agentKind?: string) {
  * The model a structured decision uses (routing, evaluation). It must honour a
  * strict JSON schema, so the router only considers models documented to do so.
  */
-export function getRoutingModel() {
-  return createRoutedModel({ role: "evaluator" })
+export function getRoutingModel(selection?: ProviderSelection) {
+  return createRoutedModel({
+    role: "evaluator",
+    ...(selection && { providerSelection: selection }),
+  })
 }
 
 /**
@@ -69,11 +74,15 @@ export function getRoutingModel() {
  * themselves do not require structured output, which keeps tools-only models
  * (such as Workers AI) eligible for conversation.
  */
-export function structuredChatModel(agentKind?: string) {
+export function structuredChatModel(
+  agentKind?: string,
+  selection?: ProviderSelection
+) {
   return createRoutedModel({
     role: modelRoleForAgentKind(agentKind),
     requirements: { structuredOutput: true },
     ...(agentKind ? { agentKind } : {}),
+    ...(selection && { providerSelection: selection }),
   })
 }
 

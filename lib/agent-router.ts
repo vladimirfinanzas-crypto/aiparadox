@@ -5,6 +5,7 @@ import { z } from "zod"
 import { agentKinds, ORCHESTRATOR_ROLE } from "@/lib/agents"
 import { db } from "@/db"
 import { bots, type Bot } from "@/db/schema"
+import type { ProviderSelection } from "@/lib/ai/models"
 import { getRoutingModel } from "@/lib/model"
 
 // Everyone the router may choose between. This runs inside the Trigger.dev
@@ -54,7 +55,9 @@ function fallback(candidates: Bot[]): Bot {
 
 export async function pickAgent(
   candidates: Bot[],
-  message: string
+  message: string,
+  /** The person's provider order/opt-outs, so routing follows their choices. */
+  selection?: ProviderSelection
 ): Promise<RouteDecision> {
   if (candidates.length === 0) throw new Error("No agent available in this chat")
 
@@ -93,7 +96,7 @@ export async function pickAgent(
 
   try {
     const { object } = await generateObject({
-      model: getRoutingModel(),
+      model: getRoutingModel(selection),
       schema: decisionSchema,
       abortSignal: AbortSignal.timeout(ROUTING_DEADLINE_MS),
       system: [
