@@ -59,16 +59,36 @@ export type FailedAttempt = {
   message: string
 }
 
+/** Why the ladder ended, which decides what the person is told to do about it. */
+export type FailureReason =
+  | "all_failed"
+  | "no_eligible_model"
+  | "none_configured"
+  | "auth_failed"
+
 /**
- * Every provider that could run this call failed or was unavailable. The
- * message is what the person sees, so it says plainly that this is temporary.
+ * The variable names a deployment needs, in the order worth trying. Names only:
+ * this string goes into a message, so it must never carry a value.
+ */
+export const AI_PROVIDER_ENV_HINT =
+  "OPENROUTER_API_KEY (recommended), GOOGLE_GENERATIVE_AI_API_KEY, CEREBRAS_API_KEY, GROQ_API_KEY, or CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN"
+
+/**
+ * Every provider that could run this call failed or was unavailable.
+ *
+ * The message is shown to a person and written to the logs, so it has to be
+ * actionable rather than reassuring: "try again in a moment" is a lie when the
+ * real cause is a missing variable or a rejected key, and those are the two
+ * failures this app actually hit.
  */
 export class AllProvidersFailedError extends Error {
   constructor(
     readonly role: string,
     readonly attempts: FailedAttempt[],
     readonly retryAt: Date | null = null,
-    readonly reason: "all_failed" | "no_eligible_model" | "none_configured" = "all_failed"
+    readonly reason: FailureReason = "all_failed",
+    /** Capabilities the role needs, named in the `no_eligible_model` message. */
+    readonly requires: string[] = []
   ) {
     const detail = attempts
       .slice(0, 6)
@@ -80,11 +100,33 @@ export class AllProvidersFailedError extends Error {
       : " Try again in a moment."
 
     super(
-      `No AI provider could answer the ${role} request right now.${when}` +
-        (detail ? ` (${detail})` : "")
+      reason === "none_configured"
+        ? `No AI provider is configured, so no model can be called. Set ${AI_PROVIDER_ENV_HINT} in the web deployment's environment AND in the Trigger.dev worker, which is what runs the chat.`
+        : reason === "auth_failed"
+          ? `Every configured AI provider rejected its credentials, so retrying will not help. Replace the provider keys that answer 401 — ${AI_PROVIDER_ENV_HINT} — in the web deployment and in the Trigger.dev worker.`
+          : reason === "no_eligible_model"
+            ? `No configured model can run the ${role} request: every catalogued model lacks ${requires.length > 0 ? requires.join(", ") : "a required capability"}. Check the model ids and capabilities in the catalog, or configure a model that has them with PARADOX_MODEL_${role.toUpperCase()}.`
+            : `No AI provider could answer the ${role} request right now.${when}` +
+              (detail ? ` (${detail})` : "")
     )
     this.name = "AllProvidersFailedError"
   }
+}
+
+/** What kind of failure a message describes, for whoever shows it. */
+export type AiFailureCode = "not_configured" | "auth_rejected" | "no_eligible_model" | "unavailable"
+
+/**
+ * Reads the code back out of a message, so a client can say what to fix without
+ * importing the router. Stable sentences, not error classes: the message is what
+ * crosses the process boundary between the worker and the browser.
+ */
+export function aiFailureCodeOf(message: string): AiFailureCode | null {
+  if (/no AI provider is configured/i.test(message)) return "not_configured"
+  if (/rejected its credentials/i.test(message)) return "auth_rejected"
+  if (/No configured model can run/i.test(message)) return "no_eligible_model"
+  if (/No AI provider could answer/i.test(message)) return "unavailable"
+  return null
 }
 
 export function sleep(ms: number): Promise<void> {

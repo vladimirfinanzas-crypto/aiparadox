@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 
-import { AllProvidersFailedError, classifyProviderError } from "../fallback"
+import {
+  AllProvidersFailedError,
+  aiFailureCodeOf,
+  classifyProviderError,
+} from "../fallback"
 import { createRoutedModel, planForRole, type RouterAvailability, type RouterDeps } from "../model-router"
 import type {
   AiCallOptions,
@@ -536,7 +540,12 @@ describe("capability checks", () => {
       deps,
     }) as unknown as AiLanguageModel
 
-    await expect(model.doGenerate(prompt())).rejects.toThrow(/No AI provider could answer/)
+    // Not "every provider failed": no provider was called, because no candidate
+    // can do the job. The message names the missing capability so the fix is
+    // visible (catalog, or PARADOX_MODEL_EVALUATOR).
+    await expect(model.doGenerate(prompt())).rejects.toThrow(
+      /No configured model can run the evaluator request.*lacks streaming, structuredOutput/
+    )
   })
 
   it("routes an image prompt only to a vision-capable model", async () => {
@@ -769,5 +778,87 @@ describe("streaming and cancellation", () => {
     expect(new Set(results).size).toBe(10)
     expect(geminiCalls).toBe(10)
     expect(quotaCalls.quota).toHaveLength(10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// What the person is told when nothing can answer
+// ---------------------------------------------------------------------------
+
+describe("failure reasons", () => {
+  it("says the credentials were rejected when every attempt was a 401", async () => {
+    const { deps } = harness({
+      models: {
+        "or-general": {
+          generate: () => {
+            throw apiError({ status: 401, message: "invalid api key" })
+          },
+        },
+        "gemini-general": {
+          generate: () => {
+            throw apiError({ status: 401, message: "API key not valid" })
+          },
+        },
+      },
+    })
+
+    const model = createRoutedModel({
+      role: "general",
+      candidates: [
+        candidate("openrouter", "or-general"),
+        candidate("gemini", "gemini-general"),
+      ],
+      deps,
+      maxRetriesPerCandidate: 0,
+    }) as unknown as AiLanguageModel
+
+    const error = await Promise.resolve(model.doGenerate(prompt())).catch(
+      (cause: unknown) => cause
+    )
+
+    expect(error).toBeInstanceOf(AllProvidersFailedError)
+    const failure = error as AllProvidersFailedError
+    // Retrying cannot fix a rejected key, so the message must not suggest it
+    expect(failure.reason).toBe("auth_failed")
+    expect(failure.message).toMatch(/rejected its credentials/)
+    expect(failure.message).not.toMatch(/Try again in a moment/)
+    // Actionable, and it names variables without ever carrying a value
+    expect(failure.message).toMatch(/OPENROUTER_API_KEY/)
+    expect(aiFailureCodeOf(failure.message)).toBe("auth_rejected")
+  })
+
+  it("says nothing is configured when no provider has credentials", async () => {
+    const { deps } = harness({ models: {} })
+    const unconfigured: RouterDeps = {
+      ...deps,
+      resolve: (entry) => ({
+        ok: false,
+        provider: entry.provider,
+        modelId: entry.modelId,
+        reason: "unconfigured",
+        detail: "missing OPENROUTER_API_KEY",
+      }),
+    }
+
+    const model = createRoutedModel({
+      role: "general",
+      candidates: [
+        candidate("openrouter", "or-general"),
+        candidate("gemini", "gemini-general"),
+      ],
+      deps: unconfigured,
+    }) as unknown as AiLanguageModel
+
+    const error = await Promise.resolve(model.doGenerate(prompt())).catch(
+      (cause: unknown) => cause
+    )
+
+    expect(error).toBeInstanceOf(AllProvidersFailedError)
+    const failure = error as AllProvidersFailedError
+    expect(failure.reason).toBe("none_configured")
+    expect(failure.message).toMatch(/No AI provider is configured/)
+    // The worker is the part people forget, so the message names it
+    expect(failure.message).toMatch(/Trigger\.dev worker/)
+    expect(aiFailureCodeOf(failure.message)).toBe("not_configured")
   })
 })

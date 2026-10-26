@@ -35,6 +35,18 @@ async function assertChatOwner(chatId: string) {
   if (!chat) throw new Error("Chat not found")
 }
 
+// The turn itself runs in Trigger.dev, so the web server needs its key before
+// anything can start. Without this check the SDK's own error surfaces to the
+// browser as "the model did not answer", which sends people looking at the
+// wrong thing: no model was ever called.
+function assertTriggerConfigured() {
+  if (!process.env.TRIGGER_SECRET_KEY?.trim()) {
+    throw new Error(
+      "Chat unavailable: TRIGGER_SECRET_KEY is not set on the server, so no turn can start. Add it to the deployment's environment (Netlify → Site configuration → Environment variables) and check that the Trigger.dev worker is deployed with the same project."
+    )
+  }
+}
+
 // Billable actions are for plans that include the feature
 async function assertFeature(feature: Feature) {
   // Test version: the paywall is off entirely
@@ -52,6 +64,7 @@ async function assertFeature(feature: Feature) {
 export async function startChatSession(
   params: ChatStartSessionParams<typeof chatAgent>
 ) {
+  assertTriggerConfigured()
   await assertFeature("bots")
   await assertChatOwner(params.chatId)
 
@@ -63,6 +76,7 @@ export async function startChatSession(
 }
 
 export async function mintChatAccessToken(chatId: string) {
+  assertTriggerConfigured()
   // Sending needs a token, so a session started on a paid plan ends with it
   await assertFeature("bots")
   await assertChatOwner(chatId)

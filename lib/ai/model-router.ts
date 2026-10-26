@@ -8,6 +8,7 @@ import {
   sleep,
   type ClassifiedError,
   type FailedAttempt,
+  type FailureReason,
 } from "./fallback"
 import {
   ROLE_DEADLINES,
@@ -479,19 +480,28 @@ export function createRoutedModel(options: RoutedModelOptions): LanguageModel {
       message: `missing ${entry.missing.join(", ")}`,
     }))
 
-    const reason =
+    const reason: FailureReason =
       plan.candidates.length === 0
         ? "no_eligible_model"
         : failures.length > 0 &&
             failures.every((entry) => entry.category === "unconfigured")
           ? "none_configured"
-          : "all_failed"
+          : // Every configured provider answered 401. Telling someone to retry
+            // here would waste their time: the keys are the problem, and the
+            // per-provider blocks below say which ones.
+            failures.length > 0 &&
+              failures.every((entry) => entry.category === "auth")
+            ? "auth_failed"
+            : "all_failed"
 
     return new AllProvidersFailedError(
       role,
       [...failures, ...unsupported].slice(0, 12),
       null,
-      reason
+      reason,
+      Object.entries(plan.required)
+        .filter(([, needed]) => needed)
+        .map(([capability]) => capability)
     )
   }
 

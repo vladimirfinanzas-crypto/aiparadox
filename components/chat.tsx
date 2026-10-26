@@ -18,6 +18,9 @@ import {
   mintChatAccessToken,
   startChatSession,
 } from "@/actions/chat"
+// A pure message classifier: it reads the sentence the router writes, so the
+// browser does not have to import the router (or its providers) to explain it.
+import { aiFailureCodeOf } from "@/lib/ai/fallback"
 
 import { ChatAvatar } from "@/components/chat-avatar"
 import { ExecutionEnvironmentCard } from "@/components/execution-environment-card"
@@ -326,6 +329,78 @@ function splitByAuthor(message: ChatUIMessage, bots: ChatBot[]) {
   return sections
 }
 
+/**
+ * What to tell the person when a turn failed.
+ *
+ * The cause decides the advice: missing keys, rejected keys and "every model is
+ * busy" need three different actions, and offering "try again" for the first
+ * two wastes the person's time until an operator fixes the deployment.
+ */
+function failureToast(message: string) {
+  const code = aiFailureCodeOf(message)
+
+  if (code === "not_configured") {
+    return {
+      type: "error" as const,
+      title: "Faltan las claves de IA",
+      description:
+        "No hay ningún proveedor configurado. Añade OPENROUTER_API_KEY (o Gemini, Cerebras, Groq o Cloudflare) a las variables del despliegue y del worker de Trigger.dev, que es donde se ejecuta el chat.",
+    }
+  }
+
+  if (code === "auth_rejected") {
+    return {
+      type: "error" as const,
+      title: "Claves de IA rechazadas",
+      description:
+        "Todos los proveedores configurados respondieron 401. Sustituye las claves en el despliegue y en el worker de Trigger.dev: reintentar no lo arregla.",
+    }
+  }
+
+  if (code === "no_eligible_model") {
+    return {
+      type: "error" as const,
+      title: "Ningún modelo puede con esta tarea",
+      description:
+        "El catálogo no tiene un modelo con las capacidades que pide esta llamada (por ejemplo, visión o esquema JSON estricto). Revisa Settings → Integrations → Runtime de modelos.",
+    }
+  }
+
+  if (code === "unavailable") {
+    return {
+      type: "error" as const,
+      title: "Ningún proveedor pudo responder",
+      description:
+        "Todos los modelos fallaron o están en espera por límite de cuota. Vuelve a intentarlo en un momento; el motivo concreto queda en Settings → Integrations → Runtime de modelos.",
+    }
+  }
+
+  if (/TRIGGER_SECRET_KEY/.test(message)) {
+    return {
+      type: "error" as const,
+      title: "El chat no está conectado",
+      description:
+        "El turno se ejecuta en Trigger.dev y falta TRIGGER_SECRET_KEY en el servidor. No se llegó a llamar a ningún modelo.",
+    }
+  }
+
+  if (/free-model allowance|free-models-per-day/i.test(message)) {
+    return {
+      type: "error" as const,
+      title: "Sin cuota de modelos gratuitos",
+      description:
+        "El límite diario de modelos gratuitos de OpenRouter está agotado. Se renueva a medianoche UTC; añadir 10 créditos a la cuenta lo sube a 1000 peticiones al día.",
+    }
+  }
+
+  return {
+    type: "error" as const,
+    title: "El agente no pudo responder",
+    description:
+      "El modelo no llegó a responder. Vuelve a intentarlo; si se repite, revisa Settings → Integrations → Runtime de modelos.",
+  }
+}
+
 // `bots` are a group chat's members to pick from; a direct chat passes none.
 // `orchestrator` is the hidden agent that fronts direct conversations; when it
 // is there and the chat is still empty, the chat opens with its welcome.
@@ -496,20 +571,10 @@ function ChatMessages({
         "error.message": error.message,
       })
 
-      // A failed turn must say so. Without this the loader simply disappears and
-      // the person is left guessing whether the agent is still thinking.
-      const quota = /free-model allowance|free-models-per-day/i.test(
-        error.message
-      )
-      toast.add({
-        type: "error",
-        title: quota
-          ? "Sin cuota de modelos gratuitos"
-          : "El agente no pudo responder",
-        description: quota
-          ? "El límite diario de modelos gratuitos de OpenRouter está agotado. Se renueva a medianoche UTC; añadir 10 créditos a la cuenta lo sube a 1000 peticiones al día."
-          : "El modelo no llegó a responder. Vuelve a intentarlo; si se repite, revisa Settings → Integrations → Runtime de modelos.",
-      })
+      // A failed turn must say so, and must say the true cause: "the model did
+      // not answer" is misleading when no model was ever called because a
+      // variable is missing or every key was rejected.
+      toast.add(failureToast(error.message))
     },
   })
   // The bot the next message goes to, in a group chat
