@@ -165,7 +165,7 @@ Detalle completo en [`desktop/README.md`](desktop/README.md). Sin agente conecta
 ```bash
 npm run lint        # ESLint (flat config; ignora cachés de build)
 npm run typecheck   # tsc --noEmit
-npm run test        # vitest run — 187 pruebas en 21 archivos
+npm run test        # vitest run — 196 pruebas en 24 archivos (12 se omiten sin DATABASE_URL)
 npm run desktop:test  # pruebas del Desktop Agent (unittest de Python)
 npm run build       # build de producción de Next.js
 ```
@@ -176,6 +176,20 @@ npm run build       # build de producción de Next.js
 ---
 
 ## Despliegue
+
+**Netlify (producción: https://aiparadox.netlify.app)** — el sitio está conectado a este repositorio, así que cada push a `main` compila y despliega. `netlify.toml` fija `NODE_VERSION=22` (Next 16 exige ≥ 20.9) y `publish = ".next"`, que es lo que espera el runtime de Next.js de Netlify.
+
+El build **no** necesita base de datos ni claves de IA: el cliente Postgres y los proveedores se crean en la primera consulta, no al importar el módulo (así `next build` se puede reproducir desde un checkout limpio). Lo que sí tiene que existir en **Site configuration → Environment variables**:
+
+| Variable | Por qué |
+|---|---|
+| `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | consultas en runtime y migraciones |
+| `CLERK_SECRET_KEY` | sesión en el servidor |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | se **inyecta en el bundle al compilar**: sin ella el deploy publica una app que no puede iniciar sesión |
+| `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SITE_URL` | URLs públicas |
+| `TRIGGER_SECRET_KEY` | chat y automatizaciones |
+
+El worker de Trigger.dev **no** lo despliega Netlify: va aparte (bloque siguiente). `GET /api/health` queda fuera del middleware de Clerk a propósito, para que el healthcheck siga respondiendo aunque la configuración de auth esté incompleta.
 
 **Plataforma Node (p. ej. Railway — `next.config.ts` ya lee `RAILWAY_GIT_COMMIT_SHA`):**
 
@@ -219,6 +233,8 @@ desde la versión `20261025.3`.
 | 401 en APIs de la app | Sin sesión o token caducado | Iniciar sesión de nuevo (Clerk) |
 | 401 en `/api/pc/jobs` | Token de dispositivo ausente/revocado | Rearmar el agente en Settings → Desktop Agent |
 | «Tarea local esperando» | Desktop Agent desconectado | Abrir el agente local; el estado real está en Live View |
+| Todas las rutas responden 500 salvo `/api/health` | Faltan las claves de Clerk (`CLERK_SECRET_KEY` y, sobre todo, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`), que se inyecta al compilar | Añádelas en las variables de entorno y vuelve a desplegar |
+| El build falla en «Collecting page data» / `PLATFORM_ENV_NOT_INJECTED` | Un módulo leía `DATABASE_URL` al importarse (ya corregido: se lee en la primera consulta) | Si reaparece, busca lecturas de entorno a nivel de módulo |
 | Migración «ya existe» / columna inexistente | Base desalineada del journal | Aplica los SQL con `apply-migration.mjs` en orden; no uses `db:push` en producción |
 | Las automatizaciones no disparan | Schedule no creado o worker caído | Comprueba `workflows.next_run_at` y el worker de Trigger.dev |
 | Errores de hidratación | Extensión del navegador o branch `typeof window` | Ver consola; el tema aplica `suppressHydrationWarning` en `<html>` |
