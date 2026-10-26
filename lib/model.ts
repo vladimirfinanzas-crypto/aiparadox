@@ -7,6 +7,7 @@ import {
   modelRoleForAgentKind,
   modelRoles,
   type ProviderSelection,
+  type RoleModelPreference,
 } from "./ai/models"
 import { createRoutedModel } from "./ai/model-router"
 import type { ModelRole } from "./ai/types"
@@ -42,19 +43,35 @@ export function getFreeModelTypes(): ModelRole[] {
  * The model for one role, with its cross-provider fallback ladder and
  * deadlines. `streamText` and `generateText` take it like any provider model.
  */
-export function roleModel(role: ModelRole, selection?: ProviderSelection) {
-  return createRoutedModel({ role, ...(selection && { providerSelection: selection }) })
+export function roleModel(
+  role: ModelRole,
+  selection?: ProviderSelection,
+  /** The model this person chose to lead the role, if any. */
+  preference?: RoleModelPreference
+) {
+  return createRoutedModel({
+    role,
+    ...(selection && { providerSelection: selection }),
+    ...(preference && { modelPreference: preference }),
+  })
 }
 
 /**
  * The model an agent kind talks to: the chat model for conversation, the fast
  * one for browser steps, the vision one for screen work.
  */
-export function chatModel(agentKind?: string, selection?: ProviderSelection) {
+export function chatModel(
+  agentKind?: string,
+  selection?: ProviderSelection,
+  preferences?: Partial<Record<ModelRole, RoleModelPreference>>
+) {
+  const role = modelRoleForAgentKind(agentKind)
+  const preference = preferences?.[role]
   return createRoutedModel({
-    role: modelRoleForAgentKind(agentKind),
+    role,
     ...(agentKind ? { agentKind } : {}),
     ...(selection && { providerSelection: selection }),
+    ...(preference && { modelPreference: preference }),
   })
 }
 
@@ -62,10 +79,15 @@ export function chatModel(agentKind?: string, selection?: ProviderSelection) {
  * The model a structured decision uses (routing, evaluation). It must honour a
  * strict JSON schema, so the router only considers models documented to do so.
  */
-export function getRoutingModel(selection?: ProviderSelection) {
+export function getRoutingModel(
+  selection?: ProviderSelection,
+  preferences?: Partial<Record<ModelRole, RoleModelPreference>>
+) {
+  const preference = preferences?.evaluator
   return createRoutedModel({
     role: "evaluator",
     ...(selection && { providerSelection: selection }),
+    ...(preference && { modelPreference: preference }),
   })
 }
 
@@ -76,13 +98,17 @@ export function getRoutingModel(selection?: ProviderSelection) {
  */
 export function structuredChatModel(
   agentKind?: string,
-  selection?: ProviderSelection
+  selection?: ProviderSelection,
+  preferences?: Partial<Record<ModelRole, RoleModelPreference>>
 ) {
+  const role = modelRoleForAgentKind(agentKind)
+  const preference = preferences?.[role]
   return createRoutedModel({
-    role: modelRoleForAgentKind(agentKind),
+    role,
     requirements: { structuredOutput: true },
     ...(agentKind ? { agentKind } : {}),
     ...(selection && { providerSelection: selection }),
+    ...(preference && { modelPreference: preference }),
   })
 }
 
