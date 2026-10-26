@@ -115,7 +115,7 @@ La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin c
 Cinco proveedores detrás de un router (`lib/ai/model-router.ts`): OpenRouter primero; Gemini, Cerebras, Groq y Workers AI como escalera de fallback, con cuotas, cooldowns y límite de reintentos por petición.
 
 - Documentación completa: [`docs/ai-providers.md`](docs/ai-providers.md)
-- Diagnóstico en vivo: `GET /api/ai/health` (con sesión) — clave visible, modelos configurados y, con `?probe=1`, tiempo de respuesta de cada uno.
+- Diagnóstico en vivo: `GET /api/ai/health` (con sesión) — clave visible, modelos configurados y, con `?probe=1`, una llamada mínima a cada proveedor configurado (a través de su propio adaptador) y a cada modelo de OpenRouter, con presupuesto acotado (~8 s) para caber en una función de Netlify.
 - Registro de herramientas del agente: [`docs/tool-registry.md`](docs/tool-registry.md)
 - Navegación de Godfather: [`docs/godfather-browser.md`](docs/godfather-browser.md)
 - **Daytona (opcional)** — sandboxes de los agentes de chat (`DAYTONA_API_KEY`).

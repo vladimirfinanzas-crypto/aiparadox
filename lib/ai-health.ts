@@ -1,10 +1,12 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
-import { generateText } from "ai"
+import { generateText, type LanguageModel } from "ai"
 
+import { redact } from "./ai/fallback"
+import { catalogForRole } from "./ai/models"
 import { planForRole } from "./ai/model-router"
-import { providerConfigurations } from "./ai/provider-registry"
+import { adapterFor, providerConfigurations } from "./ai/provider-registry"
 import { quotaReport, type ProviderQuotaReport } from "./ai/quota-manager"
-import type { ProviderConfiguration } from "./ai/types"
+import type { ProviderConfiguration, ProviderId } from "./ai/types"
 import { MODEL_CONFIG, MODEL_LADDERS, type ModelRole } from "./model"
 import { fetchFreeQuota, type FreeQuota } from "./openrouter-quota"
 
@@ -24,6 +26,26 @@ import { fetchFreeQuota, type FreeQuota } from "./openrouter-quota"
 export type ModelProbe = {
   id: string
   ok: boolean
+  ms: number
+  error?: string
+  /** "skipped" means the probe budget ran out before this model was called. */
+  status?: "ok" | "failed" | "skipped"
+}
+
+/**
+ * One tiny call through one provider's own adapter.
+ *
+ * This is the check the OpenRouter catalogue cannot do: whether each rung of the
+ * fallback ladder is reachable *right now* with the credentials this deployment
+ * holds. It goes straight to the adapter instead of through the router, so a
+ * cooldown learned earlier does not hide the provider's real state (and the
+ * probe touches no quota bookkeeping).
+ */
+export type ProviderProbe = {
+  provider: ProviderId
+  /** The model the general role would use on this provider, if any. */
+  model: string | null
+  status: "ok" | "failed" | "skipped"
   ms: number
   error?: string
 }
@@ -60,6 +82,10 @@ export type AiHealth = {
   withoutTools: string[]
   roles: RoleHealth[]
   probes?: ModelProbe[]
+  /** Per-provider reachability, when `?probe=1` asked for it. */
+  providerProbes?: ProviderProbe[]
+  /** Total time the probes were allowed, so a caller knows what was cut short. */
+  probeBudgetMs?: number
   /** Today's free-model allowance for the key, when OpenRouter reports it. */
   quota?: FreeQuota | null
 }
@@ -110,6 +136,15 @@ export function configuredModelIds(): string[] {
   return [...ids]
 }
 
+// Every network call in this endpoint is bounded. It runs inside a Netlify
+// function, which is killed after a few seconds: an unbounded fetch would end as
+// a 502 with no diagnosis at all, which is worse than a partial answer.
+const CATALOGUE_TIMEOUT_MS = 4_000
+/** Per-probe cap. */
+const PROBE_TIMEOUT_MS = 4_000
+/** Whole probe phase, so `?probe=1` still fits in a synchronous function. */
+const PROBE_BUDGET_MS = 8_000
+
 async function fetchCatalogue(
   key: string
 ): Promise<{ models: CatalogueEntry[]; error?: string }> {
@@ -117,6 +152,7 @@ async function fetchCatalogue(
     const response = await fetch("https://openrouter.ai/api/v1/models", {
       headers: { Authorization: `Bearer ${key}` },
       cache: "no-store",
+      signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS),
     })
     if (!response.ok) {
       return { models: [], error: `OpenRouter /models answered ${response.status}` }
@@ -136,39 +172,148 @@ async function fetchCatalogue(
  * a ladder's. `reasoning` is off: a reasoning model would spend its short token
  * budget thinking and return nothing, which says nothing about its health.
  */
-async function probeModel(key: string, id: string): Promise<ModelProbe> {
+function budgetLeft(deadline: number): number {
+  return Math.max(0, deadline - Date.now())
+}
+
+function timeoutFor(deadline: number): number {
+  return Math.max(250, Math.min(PROBE_TIMEOUT_MS, budgetLeft(deadline)))
+}
+
+async function probeModel(
+  key: string,
+  id: string,
+  deadline: number
+): Promise<ModelProbe> {
+  if (budgetLeft(deadline) < 250) {
+    return { id, ok: false, ms: 0, status: "skipped", error: "probe budget spent" }
+  }
+
   const started = Date.now()
   try {
     const result = await generateText({
       model: createOpenRouter({ apiKey: key }).chat(id),
       prompt: "Reply with exactly: OK",
       maxOutputTokens: 16,
-      abortSignal: AbortSignal.timeout(20_000),
+      // One probe is one call: the retry layers belong to a real turn, not to a
+      // diagnostic that must fit in a short function deadline.
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(timeoutFor(deadline)),
       providerOptions: { openrouter: { reasoning: { effort: "none" } } },
     })
     const ms = Date.now() - started
     const text = result.text.trim()
     return text.length > 0
-      ? { id, ok: true, ms }
-      : { id, ok: false, ms, error: "empty answer" }
+      ? { id, ok: true, ms, status: "ok" }
+      : { id, ok: false, ms, status: "failed", error: "empty answer" }
   } catch (error) {
     return {
       id,
       ok: false,
       ms: Date.now() - started,
-      error: error instanceof Error ? error.message.slice(0, 300) : "request failed",
+      status: "failed",
+      error: error instanceof Error ? redact(error.message) : "request failed",
     }
   }
 }
 
+/**
+ * Calls each provider once, through its own adapter, all at the same time.
+ *
+ * A provider with no catalogued model is reported as skipped rather than
+ * failed: that is a gap in the catalogue, not an outage.
+ */
+async function probeProviders(deadline: number): Promise<ProviderProbe[]> {
+  const configured = providerConfigurations().filter((entry) => entry.configured)
+
+  return Promise.all(
+    configured.map(async (entry): Promise<ProviderProbe> => {
+      const candidate = catalogForRole("general").find(
+        (model) => model.provider === entry.id
+      )
+      if (!candidate) {
+        return {
+          provider: entry.id,
+          model: null,
+          status: "skipped",
+          ms: 0,
+          error: "no model catalogued for this provider",
+        }
+      }
+
+      if (budgetLeft(deadline) < 250) {
+        return {
+          provider: entry.id,
+          model: candidate.modelId,
+          status: "skipped",
+          ms: 0,
+          error: "probe budget spent",
+        }
+      }
+
+      const started = Date.now()
+      try {
+        const adapter = adapterFor(entry.id)
+        const result = await generateText({
+          model: adapter.createModel(candidate.modelId) as LanguageModel,
+          prompt: "Reply with exactly: OK",
+          maxOutputTokens: 8,
+          maxRetries: 0,
+          abortSignal: AbortSignal.timeout(timeoutFor(deadline)),
+          ...(entry.id === "openrouter" && {
+            providerOptions: { openrouter: { reasoning: { effort: "none" } } },
+          }),
+        })
+        const ms = Date.now() - started
+        return result.text.trim().length > 0
+          ? { provider: entry.id, model: candidate.modelId, status: "ok", ms }
+          : {
+              provider: entry.id,
+              model: candidate.modelId,
+              status: "failed",
+              ms,
+              error: "empty answer",
+            }
+      } catch (error) {
+        return {
+          provider: entry.id,
+          model: candidate.modelId,
+          status: "failed",
+          ms: Date.now() - started,
+          error: error instanceof Error ? redact(error.message) : "request failed",
+        }
+      }
+    })
+  )
+}
+
 // Free providers rate-limit aggressively, so probes run a few at a time instead
 // of all at once: the point is to measure each model, not to stress the tier.
-async function probeAll(key: string, ids: string[]): Promise<ModelProbe[]> {
+async function probeAll(
+  key: string,
+  ids: string[],
+  deadline: number
+): Promise<ModelProbe[]> {
   const results: ModelProbe[] = []
   const concurrency = 2
   for (let index = 0; index < ids.length; index += concurrency) {
     const batch = ids.slice(index, index + concurrency)
-    results.push(...(await Promise.all(batch.map((id) => probeModel(key, id)))))
+    results.push(
+      ...(await Promise.all(batch.map((id) => probeModel(key, id, deadline))))
+    )
+    if (budgetLeft(deadline) < 250) {
+      // Out of time: say which ids were not measured instead of dropping them
+      results.push(
+        ...ids.slice(index + concurrency).map((id): ModelProbe => ({
+          id,
+          ok: false,
+          ms: 0,
+          status: "skipped",
+          error: "probe budget spent",
+        }))
+      )
+      break
+    }
   }
   return results
 }
@@ -193,8 +338,16 @@ export async function checkAiHealth(
   const routing = rolePlans()
   const quotas = quotaReport()
 
+  // The budget starts before the first network call, so the whole request —
+  // catalogue, allowance and probes — stays inside one function timeout.
+  const deadline = Date.now() + PROBE_BUDGET_MS
   const key = apiKey()
+
   if (!key) {
+    // Still worth probing: another provider may be configured and healthy, and
+    // that is exactly what someone debugging "no responde" needs to see.
+    const providerProbes = options.probe ? await probeProviders(deadline) : undefined
+
     return {
       checkedAt: new Date().toISOString(),
       keyConfigured: false,
@@ -206,6 +359,7 @@ export async function checkAiHealth(
       missing: configuredModelIds(),
       withoutTools: [],
       roles,
+      ...(providerProbes && { providerProbes, probeBudgetMs: PROBE_BUDGET_MS }),
     }
   }
 
@@ -226,6 +380,10 @@ export async function checkAiHealth(
     return !entry.supported_parameters.includes("tools")
   })
 
+  const [probes, providerProbes] = options.probe
+    ? await Promise.all([probeAll(key, ids, deadline), probeProviders(deadline)])
+    : [undefined, undefined]
+
   return {
     checkedAt: new Date().toISOString(),
     keyConfigured: true,
@@ -238,6 +396,6 @@ export async function checkAiHealth(
     withoutTools,
     roles,
     quota,
-    ...(options.probe && { probes: await probeAll(key, ids) }),
+    ...(probes && { probes, providerProbes, probeBudgetMs: PROBE_BUDGET_MS }),
   }
 }
