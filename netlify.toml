@@ -1,0 +1,4 @@
+[build.environment]
+  # Next.js embeds this internal runtime value in its generated bundles.
+  # Exclude only this non-secret variable while keeping secrets scanning enabled.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_RUNTIME"

@@ -1,6 +1,10 @@
+import { existsSync } from "node:fs"
 import { defineConfig } from "drizzle-kit"
 
-process.loadEnvFile(".env.local")
+// Hosted builds use injected environment variables and may not have this file.
+if (existsSync(".env.local")) {
+  process.loadEnvFile(".env.local")
+}
 
 export default defineConfig({
   schema: "./db/schema.ts",
