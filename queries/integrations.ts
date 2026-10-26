@@ -1,6 +1,13 @@
 import { auth } from "@clerk/nextjs/server"
+import { desc, eq } from "drizzle-orm"
 
+import { db } from "@/db"
+import { customIntegrations, mcpServers } from "@/db/schema"
+import { getProviderSelection } from "@/lib/ai/provider-settings"
+import { disabledProviders } from "@/lib/ai/models"
+import { providerConfigurations } from "@/lib/ai/provider-registry"
 import { getOrCreateIntegration } from "@/lib/pc"
+import { encryptionAvailable } from "@/lib/secrets"
 
 export type ServiceId =
   | "openrouter"
@@ -43,4 +50,76 @@ export async function getMyIntegration() {
 
   const integration = await getOrCreateIntegration(userId)
   return { userId, integration }
+}
+
+// ---------------------------------------------------------------------------
+// Integration centre
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything Settings → Integrations renders, already scoped to the session and
+ * already free of secrets.
+ *
+ * Provider data comes from the same registry the router uses
+ * (`providerConfigurations`), so the page can never disagree with what the model
+ * layer believes. Stored credentials are selected as a masked hint only; the
+ * ciphertext never leaves the server.
+ */
+export type IntegrationCenter = Awaited<ReturnType<typeof getIntegrationCenter>>
+
+export async function getIntegrationCenter() {
+  const { isAuthenticated, userId } = await auth()
+  if (!isAuthenticated) throw new Error("Unauthorized")
+
+  const [selection, customRows, mcpRows] = await Promise.all([
+    getProviderSelection(userId),
+    db
+      .select({
+        id: customIntegrations.id,
+        name: customIntegrations.name,
+        category: customIntegrations.category,
+        baseUrl: customIntegrations.baseUrl,
+        authType: customIntegrations.authType,
+        credentialHint: customIntegrations.credentialHint,
+        description: customIntegrations.description,
+        capabilities: customIntegrations.capabilities,
+        status: customIntegrations.status,
+        lastCheckedAt: customIntegrations.lastCheckedAt,
+        lastError: customIntegrations.lastError,
+        createdAt: customIntegrations.createdAt,
+      })
+      .from(customIntegrations)
+      .where(eq(customIntegrations.userId, userId))
+      .orderBy(desc(customIntegrations.createdAt)),
+    db
+      .select({
+        id: mcpServers.id,
+        name: mcpServers.name,
+        transport: mcpServers.transport,
+        url: mcpServers.url,
+        authType: mcpServers.authType,
+        credentialHint: mcpServers.credentialHint,
+        enabled: mcpServers.enabled,
+        tools: mcpServers.tools,
+        status: mcpServers.status,
+        lastCheckedAt: mcpServers.lastCheckedAt,
+        lastError: mcpServers.lastError,
+        createdAt: mcpServers.createdAt,
+      })
+      .from(mcpServers)
+      .where(eq(mcpServers.userId, userId))
+      .orderBy(desc(mcpServers.createdAt)),
+  ])
+
+  return {
+    providers: providerConfigurations(),
+    selection,
+    // Providers the operator switched off on the server. The UI shows them as
+    // locked instead of offering a toggle that could never take effect.
+    environmentDisabled: [...disabledProviders()],
+    custom: customRows,
+    mcp: mcpRows,
+    encryptionAvailable: encryptionAvailable(),
+    environment: getEnvironmentStatus(),
+  }
 }
