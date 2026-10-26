@@ -1,3 +1,6 @@
+import { normalizeAppearance, type PanelAppearance } from "./appearance"
+import { normalizePanelActions } from "./action-catalog"
+
 // ---------------------------------------------------------------------------
 // The panel document.
 //
@@ -52,6 +55,14 @@ export type PanelBlock =
 export type PanelDocument = {
   version: 2
   description?: string
+  /**
+   * The visual half — icon, palette, layout, density — chosen from the fixed
+   * lists in ./appearance, never raw CSS. Optional: panels saved before it keep
+   * rendering with the defaults.
+   */
+  appearance?: PanelAppearance
+  /** Ids of the actions this panel exposes, from ./action-catalog. */
+  actions?: string[]
   blocks: PanelBlock[]
 }
 
@@ -297,10 +308,20 @@ export function normalizeBlocks(input: unknown): PanelBlock[] {
 
 export function createDocument(input: {
   description?: string
+  appearance?: unknown
+  actions?: unknown
   blocks: unknown
 }): PanelDocument {
   const description = str(input.description, 400) || undefined
-  return { version: 2, description, blocks: normalizeBlocks(input.blocks) }
+  const appearance = normalizeAppearance(input.appearance)
+  const actions = normalizePanelActions(input.actions)
+  return {
+    version: 2,
+    description,
+    appearance,
+    ...(actions.length > 0 ? { actions } : {}),
+    blocks: normalizeBlocks(input.blocks),
+  }
 }
 
 // Maps the shapes panels used before documents existed — posts, a column/row
@@ -411,11 +432,18 @@ export function readPanelDocument(config: unknown): PanelDocument {
     return {
       version: 2,
       description: str(raw.description, 400) || undefined,
+      appearance: normalizeAppearance(raw.appearance),
+      actions: normalizePanelActions(raw.actions),
       blocks: normalizeBlocks(raw.blocks),
     }
   }
 
-  return documentFromLegacy(str(raw.type, 50), raw)
+  const legacy = documentFromLegacy(str(raw.type, 50), raw)
+  return {
+    ...legacy,
+    appearance: normalizeAppearance(raw.appearance),
+    actions: normalizePanelActions(raw.actions),
+  }
 }
 
 // Writes the document back into the widget's config without dropping keys the
@@ -428,6 +456,8 @@ export function configFromDocument(
     ...record(config),
     version: 2,
     description: document.description,
+    appearance: document.appearance ?? normalizeAppearance(undefined),
+    actions: document.actions ?? [],
     blocks: document.blocks,
   }
 }
@@ -444,6 +474,8 @@ export function mergePanelDocuments(
   return {
     version: 2,
     description: next.description ?? previous.description,
+    appearance: next.appearance ?? previous.appearance,
+    actions: next.actions ?? previous.actions,
     blocks: next.blocks.map((block) => {
       const old = before.get(block.id)
       if (!old || old.type !== block.type) return block
@@ -538,6 +570,10 @@ function structuralShape(block: PanelBlock): Record<string, unknown> {
 export function structureKey(document: PanelDocument): string {
   return JSON.stringify({
     description: document.description ?? null,
+    // The look and the enabled actions are part of the tool's structure: a
+    // redesign or a new action should leave a restorable version behind.
+    appearance: document.appearance ?? null,
+    actions: document.actions ?? [],
     blocks: document.blocks.map(structuralShape),
   })
 }
