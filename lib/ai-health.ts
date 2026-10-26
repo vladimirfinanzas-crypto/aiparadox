@@ -223,68 +223,82 @@ async function probeModel(
  * A provider with no catalogued model is reported as skipped rather than
  * failed: that is a gap in the catalogue, not an outage.
  */
-async function probeProviders(deadline: number): Promise<ProviderProbe[]> {
-  const configured = providerConfigurations().filter((entry) => entry.configured)
+/**
+ * One provider, one tiny call, through that provider's own adapter.
+ *
+ * Exported because Settings → Integrations tests a single provider on demand;
+ * the batch below reuses it so the two paths cannot drift.
+ */
+export async function probeProviderById(
+  provider: ProviderId,
+  deadline: number = Date.now() + PROBE_TIMEOUT_MS
+): Promise<ProviderProbe> {
+  const candidate = catalogForRole("general").find(
+    (model) => model.provider === provider
+  )
+  if (!candidate) {
+    return {
+      provider,
+      model: null,
+      status: "skipped",
+      ms: 0,
+      error: "no model catalogued for this provider",
+    }
+  }
 
-  return Promise.all(
-    configured.map(async (entry): Promise<ProviderProbe> => {
-      const candidate = catalogForRole("general").find(
-        (model) => model.provider === entry.id
-      )
-      if (!candidate) {
-        return {
-          provider: entry.id,
-          model: null,
-          status: "skipped",
-          ms: 0,
-          error: "no model catalogued for this provider",
-        }
-      }
+  if (budgetLeft(deadline) < 250) {
+    return {
+      provider,
+      model: candidate.modelId,
+      status: "skipped",
+      ms: 0,
+      error: "probe budget spent",
+    }
+  }
 
-      if (budgetLeft(deadline) < 250) {
-        return {
-          provider: entry.id,
-          model: candidate.modelId,
-          status: "skipped",
-          ms: 0,
-          error: "probe budget spent",
-        }
-      }
-
-      const started = Date.now()
-      try {
-        const adapter = adapterFor(entry.id)
-        const result = await generateText({
-          model: adapter.createModel(candidate.modelId) as LanguageModel,
-          prompt: "Reply with exactly: OK",
-          maxOutputTokens: 8,
-          maxRetries: 0,
-          abortSignal: AbortSignal.timeout(timeoutFor(deadline)),
-          ...(entry.id === "openrouter" && {
-            providerOptions: { openrouter: { reasoning: { effort: "none" } } },
-          }),
-        })
-        const ms = Date.now() - started
-        return result.text.trim().length > 0
-          ? { provider: entry.id, model: candidate.modelId, status: "ok", ms }
-          : {
-              provider: entry.id,
-              model: candidate.modelId,
-              status: "failed",
-              ms,
-              error: "empty answer",
-            }
-      } catch (error) {
-        return {
-          provider: entry.id,
+  const started = Date.now()
+  try {
+    const adapter = adapterFor(provider)
+    const result = await generateText({
+      model: adapter.createModel(candidate.modelId) as LanguageModel,
+      prompt: "Reply with exactly: OK",
+      maxOutputTokens: 8,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(timeoutFor(deadline)),
+      ...(provider === "openrouter" && {
+        providerOptions: { openrouter: { reasoning: { effort: "none" } } },
+      }),
+    })
+    const ms = Date.now() - started
+    return result.text.trim().length > 0
+      ? { provider, model: candidate.modelId, status: "ok", ms }
+      : {
+          provider,
           model: candidate.modelId,
           status: "failed",
-          ms: Date.now() - started,
-          error: error instanceof Error ? redact(error.message) : "request failed",
+          ms,
+          error: "empty answer",
         }
-      }
-    })
-  )
+  } catch (error) {
+    return {
+      provider,
+      model: candidate.modelId,
+      status: "failed",
+      ms: Date.now() - started,
+      error: error instanceof Error ? redact(error.message) : "request failed",
+    }
+  }
+}
+
+/**
+ * Calls each configured provider once, all at the same time.
+ *
+ * A provider with no catalogued model is reported as skipped rather than failed:
+ * that is a gap in the catalogue, not an outage.
+ */
+async function probeProviders(deadline: number): Promise<ProviderProbe[]> {
+  const configured = providerConfigurations().filter((entry) => entry.configured)
+  return Promise.all(configured.map((entry) => probeProviderById(entry.id, deadline)))
 }
 
 // Free providers rate-limit aggressively, so probes run a few at a time instead
