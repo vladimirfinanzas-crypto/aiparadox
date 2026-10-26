@@ -57,6 +57,14 @@ export const PROVIDER_QUOTA_UNITS: Record<ProviderId, "requests" | "neurons" | "
 const TEXT: readonly ModelCapability[] = ["streaming", "tools", "structuredOutput"]
 const MULTIMODAL: readonly ModelCapability[] = [...TEXT, "vision"]
 
+// OpenRouter advertises `response_format` (loose JSON mode) and
+// `structured_outputs` (strict json_schema) separately, and the live catalogue
+// lists them per model. `structuredOutput` in this catalog means the strict one,
+// the same rule Groq's models are held to below — so a model that only has
+// `response_format` is built with one of these instead of `TEXT`.
+const TEXT_LOOSE_JSON: readonly ModelCapability[] = ["streaming", "tools"]
+const MULTIMODAL_LOOSE_JSON: readonly ModelCapability[] = ["streaming", "tools", "vision"]
+
 function candidate(
   provider: ProviderId,
   modelId: string,
@@ -111,40 +119,44 @@ export const MODEL_LADDERS: Record<ModelRole, string[]> = {
 // Cross-provider catalog
 // ---------------------------------------------------------------------------
 
+// Capabilities below are the ones the live catalogue reports for each id
+// (`supported_parameters`). Where a model has tools but only loose JSON mode, it
+// carries TEXT_LOOSE_JSON: it can run an agent turn, but it is not a candidate
+// for a call that needs a strict schema.
 const OPENROUTER_MODELS: Record<ModelRole, ModelCandidate[]> = {
   general: [
-    candidate("openrouter", OR_GENERAL, TEXT, "Best free reasoning of the set"),
-    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL, "Creative and multimodal"),
+    candidate("openrouter", OR_GENERAL, TEXT_LOOSE_JSON, "Best free reasoning of the set"),
+    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL_LOOSE_JSON, "Creative and multimodal"),
     candidate("openrouter", OR_DOTS, TEXT, "Honours a strict JSON schema"),
   ],
   fast: [
-    candidate("openrouter", OR_FAST, TEXT, "~270ms, but spends tokens on reasoning"),
+    candidate("openrouter", OR_FAST, TEXT_LOOSE_JSON, "~270ms, but spends tokens on reasoning"),
     candidate("openrouter", OR_DOTS, TEXT, "Fast structured answers"),
-    candidate("openrouter", OR_GENERAL, TEXT, "Stronger when the fast rung stalls"),
+    candidate("openrouter", OR_GENERAL, TEXT_LOOSE_JSON, "Stronger when the fast rung stalls"),
   ],
   code: [
-    candidate("openrouter", MODEL_CONFIG.code, TEXT, "Best free reasoning of the set"),
-    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL),
+    candidate("openrouter", MODEL_CONFIG.code, TEXT_LOOSE_JSON, "Best free reasoning of the set"),
+    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL_LOOSE_JSON),
     candidate("openrouter", OR_DOTS, TEXT),
   ],
   reasoner: [
-    candidate("openrouter", MODEL_CONFIG.reasoner, TEXT),
-    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL),
+    candidate("openrouter", MODEL_CONFIG.reasoner, TEXT_LOOSE_JSON),
+    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL_LOOSE_JSON),
     candidate("openrouter", OR_DOTS, TEXT),
   ],
   creative: [
     candidate("openrouter", OR_CREATIVE, MULTIMODAL),
     candidate("openrouter", OR_DOTS, TEXT),
-    candidate("openrouter", OR_GENERAL, TEXT),
+    candidate("openrouter", OR_GENERAL, TEXT_LOOSE_JSON),
   ],
   vision: [
     candidate("openrouter", OR_VISION, MULTIMODAL),
-    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL),
+    candidate("openrouter", OR_MULTIMODAL, MULTIMODAL_LOOSE_JSON),
     candidate("openrouter", OR_DOTS, TEXT, "No image input: only usable for vision fallbacks that carry text"),
   ],
   evaluator: [
     candidate("openrouter", OR_EVALUATOR, TEXT),
-    candidate("openrouter", OR_GENERAL, TEXT),
+    candidate("openrouter", OR_GENERAL, TEXT_LOOSE_JSON),
     candidate("openrouter", OR_VISION, MULTIMODAL),
   ],
 }
@@ -310,7 +322,11 @@ export const ROLE_DEADLINES: Record<ModelRole, number[]> = {
   reasoner: [25_000, 15_000, 15_000],
   creative: [20_000, 15_000, 15_000],
   vision: [15_000, 12_000, 12_000],
-  evaluator: [6_000, 8_000, 8_000],
+  // Routing must fit inside the caller's own budget: `pickAgent` gives the
+  // whole decision 4.5s (ROUTING_DEADLINE_MS in lib/agent-router.ts). Rungs that
+  // add up to more than that can never reach a fallback — the outer signal
+  // aborts the ladder first — so these three sum to 4.5s on purpose.
+  evaluator: [2_000, 1_000, 1_000],
 }
 
 /**

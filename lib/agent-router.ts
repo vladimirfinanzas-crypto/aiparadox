@@ -34,7 +34,7 @@ const decisionSchema = z.object({
 // be the reason a reply is late. The model gets 4.5s (enough for the primary and
 // one fallback); after that the orchestrator answers and the person is not kept
 // waiting on a classification.
-const ROUTING_DEADLINE_MS = 4_500
+export const ROUTING_DEADLINE_MS = 4_500
 
 export type RouteDecision = {
   bot: Bot
