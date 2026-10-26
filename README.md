@@ -63,6 +63,7 @@ node scripts/apply-migration.mjs drizzle/0003_execution_tasks.sql
 node scripts/apply-migration.mjs drizzle/0004_automations.sql
 node scripts/apply-migration.mjs drizzle/0005_automation_step_unique.sql
 node scripts/apply-migration.mjs drizzle/0006_workspace_versions.sql
+node scripts/apply-migration.mjs drizzle/0007_integration_center.sql
 
 # 4. App + worker de Trigger.dev (dos terminales)
 npm run dev          # Next.js en http://localhost:3000
@@ -92,6 +93,7 @@ Plantilla completa en [`.env.example`](.env.example) (nombres y comentarios, sin
 | `BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID` | Navegador cloud de Godfather | Opcional |
 | `RESEND_API_KEY` + `RESEND_FROM` | Email (`send-email` y tool `email_send`) | Opcional |
 | `ZERNIO_API_KEY` | Integración Zernio | Opcional |
+| `INTEGRATIONS_ENCRYPTION_KEY` | Clave AES-256-GCM para las credenciales que el usuario guarda en el centro de integraciones (`openssl rand -base64 32`). Sin ella no se guarda ninguna credencial | Recomendada |
 | `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` / `NEXT_PUBLIC_SENTRY_DSN` | Sentry (build + runtime) | Opcional |
 | `PARADOX_PROVIDER_ORDER`, `PARADOX_DISABLED_PROVIDERS`, `PARADOX_MODEL_*`, `PARADOX_AI_MAX_*`, `PARADOX_COOLDOWN_*`, `OPENROUTER_BACKSTOP_MODEL` | Ajuste del router de IA (documentadas en la plantilla) | No |
 | `PARADOX_DESKTOP_CHANNEL` | Canal del instalador que sirve `/api/desktop/download` | No |
@@ -103,9 +105,9 @@ La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin c
 ## Base de datos y migraciones
 
 - Esquema: `db/schema.ts` (Drizzle). Todas las tablas llevan `user_id` y las consultas de `queries/` filtran por el usuario de la sesión.
-- Migraciones SQL versionadas en `drizzle/` (`0000`…`0006`), **aditivas y re-ejecutables** (`if not exists` / `on conflict`).
+- Migraciones SQL versionadas en `drizzle/` (`0000`…`0007`), **aditivas y re-ejecutables** (`if not exists` / `on conflict`).
 - El runner es `scripts/apply-migration.mjs <archivo.sql>` (usa la conexión directa, `DATABASE_URL_UNPOOLED`).
-- ⚠️ `drizzle/meta/_journal.json` solo registra `0000`: **`npm run db:migrate` (drizzle-kit) no aplica `0001`–`0006`**. Aplica esos archivos con el runner, en orden, como muestra la sección anterior. `npm run db:generate` sigue siendo el camino para *crear* una migración nueva a partir de cambios de esquema.
+- ⚠️ `drizzle/meta/_journal.json` solo registra `0000`: **`npm run db:migrate` (drizzle-kit) no aplica `0001`–`0007`**. Aplica esos archivos con el runner, en orden, como muestra la sección anterior. `npm run db:generate` sigue siendo el camino para *crear* una migración nueva a partir de cambios de esquema.
 - **Antes de un cambio que pueda tocar datos**: copia de seguridad (`pg_dump "$DATABASE_URL" > respaldo.sql`) y restaura con `psql < respaldo.sql`. No borres ni recrees tablas como solución.
 
 ---
@@ -121,6 +123,31 @@ Cinco proveedores detrás de un router (`lib/ai/model-router.ts`): OpenRouter pr
 - **Daytona (opcional)** — sandboxes de los agentes de chat (`DAYTONA_API_KEY`).
   Sin esa clave no existe ninguna sandbox: la tarea `meter-sandboxes` lo
   registra en sus logs y termina sin facturar en lugar de fallar cada 5 minutos.
+
+---
+
+## Centro de integraciones (Settings → Integrations)
+
+Un solo lugar para proveedores, APIs y herramientas, agrupado por categoría
+(IA, navegadores, APIs externas, MCP, comunicación, redes sociales, otras).
+
+- **Godfather es el sistema, no un proveedor.** El panel de prioridad lee el
+  mismo catálogo que el router (`providerConfigurations()`) y guarda
+  `ai_provider_settings`; `trigger/chat.ts` lee esa selección una vez por turno y
+  se la pasa a `chatModel`/`pickAgent`. No hay un segundo sistema de proveedores.
+  La lista del operador (`PARADOX_DISABLED_PROVIDERS`) siempre gana.
+- **Configurado ≠ conectado.** Una API o un servidor MCP guardado se muestra
+  como «configurada, sin verificar» hasta que «Probar» hace una petición real.
+- **APIs personalizadas**: URL validada contra la red real (sin `localhost`,
+  `.local`, rangos privados ni metadata de cloud — `lib/url-safety.ts`),
+  credencial cifrada con AES-256-GCM (`lib/secrets.ts`) y solo una máscara
+  visible después (`••••3456`). Sin `INTEGRATIONS_ENCRYPTION_KEY` no se guarda
+  nada: no hay fallback en texto plano.
+- **MCP**: handshake real por HTTP (`initialize` + `notifications/initialized` +
+  `tools/list`). `stdio` no se admite: la app corre en la nube y no ejecuta
+  comandos locales. Descubrir herramientas no las ejecuta; las llamadas siguen
+  pasando por el registro de herramientas del agente.
+- Detalles, modelo de datos y límites: [`docs/integrations.md`](docs/integrations.md).
 
 ---
 
