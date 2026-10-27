@@ -85,3 +85,34 @@ export async function getOrCreateAgentHomeChat() {
 
   return findOrCreateAgentHomeChatFor(userId)
 }
+
+/**
+ * Deletes one of the person's conversations — and nothing else.
+ *
+ * The chat row goes, and `chat_members` goes with it through the foreign
+ * key's ON DELETE CASCADE. Deliberately kept: the `executions` rows that
+ * record which tools ran (Activity's audit trail), the `execution_tasks`
+ * history, the `usage_entries` billing ledger, the bots themselves, and
+ * every automation, panel or device — none of those belong to one
+ * conversation. The transcript lives in Trigger.dev storage and becomes
+ * unreachable the moment the chat is gone, since every read asserts the
+ * chat exists and belongs to the caller.
+ *
+ * The WHERE clause carries the owner: a chat id from somebody else matches
+ * nothing, and the caller cannot tell "not yours" from "already deleted" —
+ * no existence leak either way. Returns the removed row, or null.
+ */
+export async function deleteChatForUser({
+  userId,
+  chatId,
+}: {
+  userId: string
+  chatId: string
+}): Promise<{ id: string; kind: "direct" | "group" } | null> {
+  const [row] = await db
+    .delete(chats)
+    .where(and(eq(chats.id, chatId), eq(chats.userId, userId)))
+    .returning({ id: chats.id, kind: chats.kind })
+
+  return row ?? null
+}

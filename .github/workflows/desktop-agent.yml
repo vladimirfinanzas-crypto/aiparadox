@@ -5,7 +5,9 @@
 #   development  every push or pull request touching desktop/**, and a manual
 #                run with channel=development.
 #                No certificate, no public domain, no publication. The installer
-#                is downloaded from the run's artifacts.
+#                is downloaded from the run's artifacts. A manual run may pass
+#                api-url so the test installer polls a real deployment instead
+#                of only localhost; the input is refused on a release.
 #
 #   production   a `desktop-v<version>` tag, or nothing: a manual run may select
 #                release only to see the validation fail informatively.
@@ -55,6 +57,10 @@ on:
         description: "release only: publish the verified installer and its manifest"
         type: boolean
         default: false
+      api-url:
+        description: "development only: server the built agent polls (empty = http://localhost:3000)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -72,6 +78,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       publish: ${{ steps.resolve.outputs.publish }}
       download-url: ${{ steps.resolve.outputs.download-url }}
+      api-url: ${{ steps.resolve.outputs.api-url }}
     steps:
       - name: Resolve channel, version and destination
         id: resolve
@@ -79,6 +86,7 @@ jobs:
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_API_URL: ${{ inputs.api-url }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           EVENT_NAME: ${{ github.event_name }}
@@ -91,6 +99,7 @@ jobs:
           version=""
           publish=false
           download_url=""
+          api_url="${INPUT_API_URL:-}"
 
           case "$EVENT_NAME" in
             workflow_dispatch)
@@ -109,6 +118,13 @@ jobs:
           esac
 
           if [ "$channel" = "production" ]; then
+            # The release server URL comes from the desktop-production
+            # environment (vars.PARADOX_API_URL); a dispatch input must never
+            # be able to point an official build at another server.
+            if [ -n "$api_url" ]; then
+              echo "::error::api-url is development-only; a release takes its server from the desktop-production environment"
+              exit 1
+            fi
             if [ -z "$version" ]; then
               echo "::error::a production release needs a desktop-v<version> tag: there is no version to publish from a bare branch"
               exit 1
@@ -126,6 +142,7 @@ jobs:
             echo "version=$version"
             echo "publish=$publish"
             echo "download-url=$download_url"
+            echo "api-url=$api_url"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -156,6 +173,10 @@ jobs:
       - uses: ./.github/actions/build-desktop
         with:
           channel: development
+          # Lets a test installer poll the real deployment over HTTPS instead
+          # of only localhost, so the connection path can be exercised on an
+          # actual Windows machine. Production never reads this input.
+          api-url: ${{ needs.config.outputs.api-url }}
 
   build-release:
     name: Build release installer
