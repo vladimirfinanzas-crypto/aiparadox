@@ -122,7 +122,7 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^8.3.5",
-    "vitest": "^3.0.0",
+    "vitest": "^5.0.5",
     "wrangler": "4.148.0"
   },
   "allowScripts": {
