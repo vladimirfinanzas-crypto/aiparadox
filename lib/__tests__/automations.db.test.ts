@@ -188,5 +188,63 @@ describe.skipIf(!hasDatabase)(
 
       await db.delete(workflows).where(eq(workflows.userId, USER_A))
     })
+
+    it("lists the global history only for its owner, named after the automation", async () => {
+      const { db } = await import("@/db")
+      const { workflows } = await import("@/db/schema")
+      const { inArray } = await import("drizzle-orm")
+      const {
+        createAutomation,
+        createRun,
+        listGlobalRunViews,
+        seedRunSteps,
+      } = await import("@/queries/automations")
+      const { emptyDefinition } = await import("@/lib/automations/definition")
+
+      await db.delete(workflows).where(inArray(workflows.userId, [USER_A, USER_B]))
+
+      const forA = await createAutomation({
+        userId: USER_A,
+        name: "Historial de A",
+        definition: emptyDefinition("Historial de A", "UTC"),
+      })
+      const forB = await createAutomation({
+        userId: USER_B,
+        name: "Historial de B",
+        definition: emptyDefinition("Historial de B", "UTC"),
+      })
+
+      const runA = await createRun({
+        userId: USER_A,
+        workflowId: forA.id,
+        version: 1,
+        origin: "manual",
+        environment: "cloud",
+        idempotencyKey: `global:${forA.id}`,
+      })
+      await createRun({
+        userId: USER_B,
+        workflowId: forB.id,
+        version: 1,
+        origin: "manual",
+        environment: "cloud",
+        idempotencyKey: `global:${forB.id}`,
+      })
+
+      await seedRunSteps(runA.id, [
+        { nodeId: "start", nodeType: "start", title: "Inicio" },
+      ])
+
+      // Each owner sees only their own runs, and each row carries the name of
+      // the automation it belongs to (the history drawer is cross-automation).
+      const seenByA = await listGlobalRunViews({ userId: USER_A })
+      expect(seenByA.map((row) => row.automationName)).toEqual(["Historial de A"])
+      expect(seenByA[0]!.steps.map((step) => step.title)).toEqual(["Inicio"])
+
+      const seenByB = await listGlobalRunViews({ userId: USER_B })
+      expect(seenByB.map((row) => row.automationName)).toEqual(["Historial de B"])
+
+      await db.delete(workflows).where(inArray(workflows.userId, [USER_A, USER_B]))
+    })
   }
 )

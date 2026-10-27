@@ -816,3 +816,83 @@ export async function getAutomationDetail(userId: string, id: string) {
 
   return { automation, runs, schedule, approvals, versions }
 }
+
+export type GlobalRunViewRow = RunViewRow & {
+  workflowId: string
+  automationName: string
+}
+
+/**
+ * Runs across every automation the person owns, newest first: the history
+ * drawer on the Automations page. The user id goes in the WHERE clause, so
+ * somebody else's runs never enter the list; the join only supplies the name
+ * to show next to each run.
+ */
+export async function listGlobalRunViews({
+  userId,
+  limit = 25,
+}: {
+  userId: string
+  limit?: number
+}): Promise<GlobalRunViewRow[]> {
+  const runs = await db
+    .select({
+      id: automationRuns.id,
+      workflowId: automationRuns.workflowId,
+      automationName: workflows.name,
+      status: automationRuns.status,
+      origin: automationRuns.origin,
+      environment: automationRuns.environment,
+      version: automationRuns.version,
+      startedAt: automationRuns.startedAt,
+      durationMs: automationRuns.durationMs,
+      error: automationRuns.error,
+    })
+    .from(automationRuns)
+    .innerJoin(workflows, eq(automationRuns.workflowId, workflows.id))
+    .where(eq(automationRuns.userId, userId))
+    .orderBy(desc(automationRuns.startedAt))
+    .limit(Math.min(limit, MAX_RUNS))
+
+  if (runs.length === 0) return []
+
+  const steps = await db
+    .select()
+    .from(automationRunSteps)
+    .where(
+      inArray(
+        automationRunSteps.runId,
+        runs.map((run) => run.id)
+      )
+    )
+    .orderBy(automationRunSteps.startedAt)
+
+  const byRun = new Map<string, typeof steps>()
+  for (const step of steps) {
+    const list = byRun.get(step.runId) ?? []
+    list.push(step)
+    byRun.set(step.runId, list)
+  }
+
+  return runs.map((run) => ({
+    id: run.id,
+    workflowId: run.workflowId,
+    automationName: run.automationName,
+    status: run.status,
+    origin: run.origin,
+    environment: run.environment,
+    version: run.version,
+    startedAt: run.startedAt.toISOString(),
+    durationMs: run.durationMs,
+    error: run.error,
+    steps: (byRun.get(run.id) ?? []).map((step) => ({
+      nodeId: step.nodeId,
+      title: step.title,
+      nodeType: step.nodeType,
+      status: step.status,
+      attempt: step.attempt,
+      error: step.error,
+      durationMs: step.durationMs,
+    })),
+  }))
+}
