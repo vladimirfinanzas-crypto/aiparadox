@@ -23,7 +23,7 @@ import { PAYWALL_ENABLED, type Feature } from "@/lib/billing"
 import { getBotDesktopUrl } from "@/lib/daytona"
 import type { ChatUIMessage } from "@/lib/sandbox-tools"
 import { getUsage } from "@/lib/usage"
-import { getChat } from "@/queries/chats"
+import { deleteChatForUser, getChat } from "@/queries/chats"
 import type { chatAgent } from "@/trigger/chat"
 
 const startSession = chat.createStartSessionAction<typeof chatAgent>("chat")
@@ -256,4 +256,55 @@ export async function deleteGroupChat(chatId: string) {
     "user.id": userId,
     "chat.id": chat.id,
   })
+}
+
+// Deleting a conversation from the sidebar. Answers with a result instead of
+// throwing, because the person is waiting on a click: a failure must leave the
+// row exactly where it was and say so in words they can act on.
+export async function deleteConversationAction(
+  chatId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { isAuthenticated, userId } = await clerkAuth()
+  if (!isAuthenticated || !userId) {
+    return { ok: false, error: "Inicia sesión para eliminar una conversación." }
+  }
+
+  // Ids are nanoid-generated server-side; anything else never reaches a query
+  const id = typeof chatId === "string" ? chatId.trim() : ""
+  if (id.length === 0 || id.length > 64) {
+    return { ok: false, error: "Esa conversación no existe." }
+  }
+
+  try {
+    // The owner lives in the WHERE clause: someone else's chat id matches
+    // nothing, and the row itself is the only thing deleted. `chat_members`
+    // follows by cascade; audits, usage and the bots are untouched.
+    const deleted = await deleteChatForUser({ userId, chatId: id })
+    if (!deleted) {
+      return { ok: false, error: "Esa conversación no existe o no es tuya." }
+    }
+
+    // The sidebar and the search palette are server-rendered from this layout
+    revalidatePath("/", "layout")
+
+    Sentry.logger.info("Conversation deleted", {
+      "user.id": userId,
+      "chat.id": deleted.id,
+      "chat.kind": deleted.kind,
+    })
+
+    return { ok: true }
+  } catch (error) {
+    // Nothing was half-removed: the delete is a single statement. Report it
+    // and leave the conversation where it is.
+    Sentry.logger.error("Conversation delete failed", {
+      "user.id": userId,
+      "chat.id": id,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return {
+      ok: false,
+      error: "No se pudo eliminar la conversación. Sigue ahí; inténtalo de nuevo.",
+    }
+  }
 }

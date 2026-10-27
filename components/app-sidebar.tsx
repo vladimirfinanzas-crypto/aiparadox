@@ -4,6 +4,7 @@ const BRAND = "Paradox"
 
 import { ChatAvatar } from "@/components/chat-avatar"
 import { ChatMenuButton } from "@/components/chat-menu-button"
+import { ConversationMenu } from "@/components/conversation-menu"
 import { GroupChatAvatar } from "@/components/group-chat-avatar"
 import { NewConversationButton } from "@/components/new-conversation-button"
 import { ParadoxLogo } from "@/components/paradox-logo"
@@ -112,30 +113,41 @@ export async function AppSidebar() {
                 <SidebarMenu>
                   {chats.map((chat) => (
                     <SidebarMenuItem key={chat.id}>
-                      <ChatMenuButton
-                        chatId={chat.id}
-                        tooltip={chat.name ?? chat.bots[0].name}
-                      >
-                        <SidebarChatAvatar chat={chat} />
-                        <div className="grid flex-1 text-left leading-tight">
-                          <div className="flex items-baseline gap-2">
-                            <span className="truncate font-medium">
-                              {chat.name ?? chat.bots[0].name}
-                            </span>
-                            <time
-                              dateTime={chat.lastMessageAt.toISOString()}
-                              className="ml-auto shrink-0 text-xs text-muted-foreground"
-                            >
-                              {formatDistanceToNowStrict(chat.lastMessageAt)}
-                            </time>
+                      {/* The row stays a link; its options only surface on
+                          hover or keyboard focus, so the list reads as a
+                          list. */}
+                      <div className="group/row relative">
+                        <ChatMenuButton
+                          chatId={chat.id}
+                          tooltip={chat.name ?? chat.bots[0].name}
+                        >
+                          <SidebarChatAvatar chat={chat} />
+                          <div className="grid flex-1 text-left leading-tight">
+                            <div className="flex items-baseline gap-2">
+                              <span className="truncate font-medium">
+                                {chat.name ?? chat.bots[0].name}
+                              </span>
+                              <time
+                                dateTime={chat.lastMessageAt.toISOString()}
+                                className="ml-auto shrink-0 text-xs text-muted-foreground transition-opacity group-hover/row:opacity-0"
+                              >
+                                {formatDistanceToNowStrict(chat.lastMessageAt)}
+                              </time>
+                            </div>
+                            {chat.lastMessagePreview && (
+                              <span className="truncate text-xs text-muted-foreground">
+                                {chat.lastMessagePreview}
+                              </span>
+                            )}
                           </div>
-                          {chat.lastMessagePreview && (
-                            <span className="truncate text-xs text-muted-foreground">
-                              {chat.lastMessagePreview}
-                            </span>
-                          )}
+                        </ChatMenuButton>
+                        <div className="absolute inset-y-0 right-1.5 flex items-center">
+                          <ConversationMenu
+                            chatId={chat.id}
+                            label={chat.name ?? chat.bots[0].name}
+                          />
                         </div>
-                      </ChatMenuButton>
+                      </div>
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>
