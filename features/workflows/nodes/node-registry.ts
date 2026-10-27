@@ -49,6 +49,41 @@ export type NodeDefinition = {
   accent: string
   fields: NodeField[]
   outputs: NodeOutput[]
+  /**
+   * Which shelf of the palette this block sits on. The canvas owns this purely
+   * presentational grouping: validation, the engine and the model keep reading
+   * `lib/automations/catalog`, and every node type must appear in exactly one
+   * category (pinned by a test).
+   */
+  category: NodeCategoryId
+}
+
+// The palette's shelves, in the order they are shown. Only blocks whose
+// execution really exists are here — there is no shelf for a capability the app
+// does not implement.
+export const nodeCategories = [
+  { id: "triggers", label: "Disparadores" },
+  { id: "ai", label: "Godfather e IA" },
+  { id: "browser", label: "Navegador · Playwright y Browserbase" },
+  { id: "desktop", label: "PC local · Desktop Agent" },
+  { id: "integrations", label: "APIs e integraciones" },
+  { id: "logic", label: "Datos y lógica" },
+] as const
+
+export type NodeCategoryId = (typeof nodeCategories)[number]["id"]
+
+const categories: Record<NodeType, NodeCategoryId> = {
+  start: "triggers",
+  agent: "ai",
+  "open-url": "browser",
+  act: "browser",
+  extract: "browser",
+  observe: "browser",
+  "desktop-action": "desktop",
+  "send-email": "integrations",
+  "publish-social": "integrations",
+  condition: "logic",
+  delay: "logic",
 }
 
 const icons: Record<NodeType, LucideIcon> = {
@@ -92,6 +127,7 @@ export const nodeRegistry = Object.fromEntries(
         accent: accents[type],
         fields: entry.fields,
         outputs: entry.outputs,
+        category: categories[type],
       } satisfies NodeDefinition,
     ]
   })
