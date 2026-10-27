@@ -109,7 +109,7 @@
     "@sentry/bundler-plugins": "^11.5.0",
     "@tailwindcss/postcss": "^4",
     "@trigger.dev/build": "4.7.4",
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -122,7 +122,7 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5",
+    "vitest": "^3.0.0",
     "wrangler": "4.148.0"
   },
   "allowScripts": {
