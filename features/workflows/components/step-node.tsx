@@ -3,7 +3,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react"
 
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
-import { useRunSteps } from "@/features/workflows/components/run-context"
+import { useRunSteps, useNodeIssues } from "@/features/workflows/components/run-context"
 import {
   nodeRegistry,
   type StepNodeType,
@@ -19,6 +19,8 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepNodeType>) {
   const fields = def.fields.filter((field) => values[field.key])
 
   const { steps, live } = useRunSteps()
+  const issues = useNodeIssues()
+  const issue = issues[id]
   const status = steps.find((step) => step.nodeId === id)?.status
   const isRunning = status === "running" && live
   const isFailed = status === "failed"
@@ -34,6 +36,7 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepNodeType>) {
         "min-w-50 max-w-80 rounded-(--radius) border-2 border-border bg-card text-card-foreground",
         isRunning && "border-blue-500",
         isFailed && "border-destructive",
+        issue && "border-destructive",
         isDone && !isFailed && "border-emerald-500/50",
         selected && "ring-2 ring-ring ring-offset-2 ring-offset-background"
       )}
@@ -76,6 +79,15 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepNodeType>) {
               </div>
             ))}
           </div>
+        </>
+      )}
+
+      {issue && (
+        <>
+          <div className="border-t border-destructive/40" />
+          <p className="line-clamp-2 bg-destructive/5 px-3 py-1.5 text-[11px] leading-tight text-destructive">
+            {issue}
+          </p>
         </>
       )}
 

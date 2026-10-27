@@ -29,3 +29,23 @@ export function RunStepsProvider({
 export function useRunSteps(): RunContextValue {
   return useContext(RunContext)
 }
+
+// The validator's verdict, keyed by node: the first blocking error for each
+// block. The banner at the top lists them in order; the canvas paints them on
+// the block itself so the person can see *which* one is wrong.
+
+const IssuesContext = createContext<Record<string, string>>({})
+
+export function NodeIssuesProvider({
+  issues,
+  children,
+}: {
+  issues: Record<string, string>
+  children: React.ReactNode
+}) {
+  return <IssuesContext.Provider value={issues}>{children}</IssuesContext.Provider>
+}
+
+export function useNodeIssues(): Record<string, string> {
+  return useContext(IssuesContext)
+}
