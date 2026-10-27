@@ -21,11 +21,27 @@ import {
 
 export type PanelTurn = { role: "user" | "assistant"; text: string }
 
+/**
+ * What Godfather understood about the request, before anything is saved:
+ * the fields it identified, the operations it would need and the services those
+ * operations imply. The strings come from the model; the server re-checks which
+ * of them are actually available (actions/workspace.ts), so a proposal never
+ * promises an operation this deployment cannot run.
+ */
+export type PanelAnalysis = {
+  purpose: string
+  fields: string[]
+  actions: string[]
+  integrations: string[]
+  notes: string[]
+}
+
 export type PanelProposal = {
   ok: boolean
   message: string
   name?: string
   document?: PanelDocument
+  analysis?: PanelAnalysis
   issues: string[]
   attempts: number
 }
@@ -50,8 +66,21 @@ Devuelves SIEMPRE un único objeto JSON con esta forma exacta:
   "message": "una o dos frases en español explicando qué construiste o qué falta",
   "name": "nombre corto de la herramienta (máx. 60 caracteres)",
   "description": "una línea sobre para qué sirve (máx. 140 caracteres)",
+  "analysis": {
+    "purpose": "qué problema resuelve, en una frase",
+    "fields": ["cada campo o dato que la persona tendrá que introducir"],
+    "actions": ["cada operación real que querrá ejecutar desde el panel"],
+    "integrations": ["servicio externo que esas operaciones necesitarían"],
+    "notes": ["lo que falta decidir o configurar, si algo falta"]
+  },
   "blocks": [ ...bloques... ]
 }
+
+Reglas de "analysis":
+- fields: máx. 8, concretos ("fecha", "enlace", "cuenta", "estado"), no genéricos.
+- actions: solo operaciones que el usuario querría ejecutar ("guardar borrador", "traer cuentas"). Máx. 6.
+- integrations: solo servicios reales de Paradox si de verdad los necesitas: Godfather/IA, navegador en la nube, equipo local, redes sociales, correo. Si todo funciona dentro del panel, devuelve []. No inventes servicios.
+- notes: máx. 5 frases cortas y accionables.
 
 Reglas de los bloques:
 - Entre 1 y 24 bloques. Cada uno con "id" único, en minúsculas, sin espacios.
@@ -59,10 +88,43 @@ Reglas de los bloques:
 - Catálogo con la forma exacta de cada bloque:
 ${CATALOGUE}
 - La herramienta se usa, no se lee: incluye las secciones que la persona va a rellenar (tabla, checklist, lista, calendario, formulario) y deja sus filas vacías o con un ejemplo mínimo. No la llenes de párrafos.
-- No inventes integraciones, envíos, publicaciones ni sincronizaciones: si la petición necesita un servicio que no existe, dilo en "message" y construye la parte que sí funciona en local.
-- Si falta un dato imprescindible (fechas concretas, nombres, importes), no lo inventes: deja el bloque preparado y explica en "message" qué falta.
+- No inventes integraciones, envíos, publicaciones ni sincronizaciones: si la petición necesita un servicio que no existe, dilo en "notes" y construye la parte que sí funciona en local.
+- Si falta un dato imprescindible (fechas concretas, nombres, importes), no lo inventes: deja el bloque preparado y explica en "notes" qué falta.
 - Si ya existe un documento, MODIFÍCALO: conserva los bloques que la persona usa (mismo id y mismo tipo) y cambia solo lo que pidió.
 - Responde en español, sin markdown y sin explicar el JSON.`
+
+/** Model output is untrusted: a list of short strings, or nothing. */
+function stringList(value: unknown, max: number, maxLength = 120): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => entry.trim().slice(0, maxLength))
+    .slice(0, max)
+}
+
+function analyzePayload(raw: unknown): PanelAnalysis | undefined {
+  const value =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {}
+
+  const analysis: PanelAnalysis = {
+    purpose: typeof value.purpose === "string" ? value.purpose.trim().slice(0, 240) : "",
+    fields: stringList(value.fields, 8, 60),
+    actions: stringList(value.actions, 6, 80),
+    integrations: stringList(value.integrations, 6, 60),
+    notes: stringList(value.notes, 5, 200),
+  }
+
+  const empty =
+    !analysis.purpose &&
+    analysis.fields.length === 0 &&
+    analysis.actions.length === 0 &&
+    analysis.integrations.length === 0 &&
+    analysis.notes.length === 0
+
+  return empty ? undefined : analysis
+}
 
 function extractJson(text: string): unknown {
   const trimmed = text.trim()
@@ -151,6 +213,7 @@ export async function proposePanel({
       message?: unknown
       name?: unknown
       description?: unknown
+      analysis?: unknown
       blocks?: unknown
     } | null
 
@@ -165,6 +228,8 @@ export async function proposePanel({
       typeof payload?.description === "string"
         ? payload.description.trim().slice(0, 140)
         : undefined
+
+    const analysis = analyzePayload(payload?.analysis)
 
     const document = createDocument({
       description: proposedDescription,
@@ -187,6 +252,7 @@ export async function proposePanel({
       message: lastMessage,
       name: proposedName,
       document: merged,
+      ...(analysis ? { analysis } : {}),
       issues: [],
       attempts: attempt,
     }

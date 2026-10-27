@@ -3,7 +3,10 @@ import { desc, eq } from "drizzle-orm"
 
 import { db } from "@/db"
 import { customIntegrations, mcpServers } from "@/db/schema"
-import { getProviderSelection } from "@/lib/ai/provider-settings"
+import {
+  getModelPreferences,
+  readProviderSelection,
+} from "@/lib/ai/provider-settings"
 import { disabledProviders } from "@/lib/ai/models"
 import { providerConfigurations } from "@/lib/ai/provider-registry"
 import { getOrCreateIntegration } from "@/lib/pc"
@@ -71,8 +74,9 @@ export async function getIntegrationCenter() {
   const { isAuthenticated, userId } = await auth()
   if (!isAuthenticated) throw new Error("Unauthorized")
 
-  const [selection, customRows, mcpRows] = await Promise.all([
-    getProviderSelection(userId),
+  const [selectionRead, preferences, customRows, mcpRows] = await Promise.all([
+    readProviderSelection(userId),
+    getModelPreferences(userId),
     db
       .select({
         id: customIntegrations.id,
@@ -113,7 +117,15 @@ export async function getIntegrationCenter() {
 
   return {
     providers: providerConfigurations(),
-    selection,
+    selection: selectionRead.selection,
+    /**
+     * False until drizzle/0007 and 0008 are applied. The page says so instead of
+     * presenting the environment defaults as this person's own settings.
+     */
+    tablesReady: selectionRead.tablesReady,
+    // The model each person chose to lead a role, already filtered to models
+    // that still exist in the catalogue.
+    preferences,
     // Providers the operator switched off on the server. The UI shows them as
     // locked instead of offering a toggle that could never take effect.
     environmentDisabled: [...disabledProviders()],

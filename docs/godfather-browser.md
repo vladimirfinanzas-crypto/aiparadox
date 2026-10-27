@@ -172,4 +172,62 @@ Browserbase session, a live Desktop Agent session, and the full sign-in flow.
   person updates the agent or chooses the cloud.
 - The Desktop Agent drives a browser process per task; many simultaneous tasks on
   one machine mean several windows, which is intentional isolation.
-- No live view, by design.
+- Live View shows each environment through the mechanism it actually has; see
+  the next section for what that is, and what it is not.
+
+## 10. Live View
+
+The floating **Live View** panel shows the session behind the current work and
+lets the person watch it. It reads three endpoints, all session-authenticated
+and all scoped to the caller's own rows:
+
+| Endpoint | What it answers |
+|---|---|
+| `GET /api/live/session` | Which session is worth showing: the newest browser task still working, or the last one if it ended in the last 30 minutes |
+| `GET /api/live/session/viewer?taskId=…` | Browserbase's own live-view URLs for a running **cloud** session |
+| `POST /api/live/session/snapshot` | One screenshot of the **local** browser window, through the Desktop Agent's job queue |
+
+### Why the two environments look different
+
+The browser session is created and held inside the Trigger.dev task that opened
+it (`lib/browser-sessions.ts` keeps it in memory), so a web route cannot reach
+into it and take a picture. Each environment therefore uses the mechanism it
+really has, and the panel labels which one is on screen:
+
+- **Cloud (Browserbase).** `sessions.debug(id, { expiresIn })` returns their own
+  debugger URLs (SDK `SessionLiveURLs`). We open that link in a new tab with
+  `noopener`, issue it only to the person whose task owns the session, and keep
+  the TTL short (10 minutes). Paradox does not build a second viewer: the browser
+  runs on Browserbase's machines and they own the stream. If the session already
+  ended, the route answers `410 session_ended` and the panel says so.
+- **Local (Desktop Agent).** The agent has no inbound connection — it polls a job
+  queue over HTTPS — so there is no video stream to show. The panel asks for a
+  screenshot (`browser_screenshot` with the task's session key), every 6 seconds
+  while it is open, and labels it *capturas, no vídeo en directo*. Only the
+  Paradox-controlled browser window is requested, never the person's whole
+  desktop.
+
+### States
+
+`sin sesión` · `conectando` (task queued) · `activo` · `pausado` (the person
+paused their Desktop Agent) · `desconectado` (the computer stopped answering) ·
+`finalizada` · `error`. Requests time out after 12 seconds with a retry button,
+so the panel never spins forever on a dead server.
+
+### Security
+
+- The caller only names a **task id**; the server resolves the session from rows
+  scoped to their user id. A foreign task answers `404`, never `403`, so the
+  route cannot be used to probe for other accounts' tasks.
+- `BROWSERBASE_API_KEY` never reaches the browser; only the provider's own
+  expiring URLs are returned, and every response is `cache-control: no-store`.
+- Nothing is minted before ownership is verified: the tests assert that a
+  foreign or unsigned caller produces zero provider calls.
+
+### Covered by tests
+
+`lib/__tests__/live-session-view.test.ts` (the state mapping) and
+`lib/__tests__/live-session-routes.test.ts` (ownership, environment routing,
+absence of provider calls for foreign callers, a session that ended, and the
+three local failure modes). A real Browserbase live view and a real Desktop
+Agent screenshot still need live credentials and a real machine.

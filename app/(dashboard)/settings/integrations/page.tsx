@@ -3,6 +3,7 @@ import Link from "next/link"
 import {
   BlocksIcon,
   BugIcon,
+  CircleAlertIcon,
   DatabaseIcon,
   GlobeIcon,
   LayersIcon,
@@ -27,6 +28,7 @@ import {
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { catalogForRole } from "@/lib/ai/models"
 import { isDeviceOnline, listDevices } from "@/lib/desktop-devices"
 import { MODEL_CONFIG, MODEL_LADDERS, type ModelRole } from "@/lib/model"
 import { getIntegrationCenter } from "@/queries/integrations"
@@ -149,6 +151,20 @@ export default async function SettingsIntegrationsPage() {
 
   return (
     <div className="flex flex-col gap-10">
+      {!center.tablesReady && (
+        <p className="flex items-start gap-2 rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4 text-sm text-amber-200">
+          <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            La base de datos todavía no tiene las tablas del centro de
+            integraciones, así que se muestran los valores por defecto y guardar
+            fallará. Aplica las migraciones{" "}
+            <code className="font-mono">drizzle/0007_integration_center.sql</code> y{" "}
+            <code className="font-mono">drizzle/0008_role_models.sql</code> con{" "}
+            <code className="font-mono">scripts/apply-migration.mjs</code>.
+          </span>
+        </p>
+      )}
+
       {/* ---------------------------------------------------------------- AI */}
       <Section
         id="ai-providers"
@@ -186,6 +202,16 @@ export default async function SettingsIntegrationsPage() {
             role,
             primary: MODEL_CONFIG[role],
             ladder: MODEL_LADDERS[role],
+            // The selectable models are the router's own plan for this person:
+            // a model from a provider they disabled can never be chosen.
+            candidates: catalogForRole(role, center.selection)
+              .slice(0, 12)
+              .map((candidate) => ({
+                provider: candidate.provider,
+                modelId: candidate.modelId,
+                label: `${candidate.provider}/${candidate.modelId}`,
+              })),
+            preference: center.preferences[role] ?? null,
           }))}
         />
       </Section>

@@ -35,6 +35,7 @@ import {
   type LiveSource,
   type LiveStatus,
 } from "@/lib/live/view"
+import { LiveSessionPanel } from "@/components/live/session-view"
 import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
@@ -295,6 +296,10 @@ export function LiveView() {
           </SheetHeader>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pb-4">
+            {/* The session itself: which environment the work is running in,
+                and the only viewport this app can honestly provide for it. */}
+            <LiveSessionPanel open={open} />
+
             <div
               aria-live="polite"
               className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground"

@@ -13,8 +13,9 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { NewAutomationButton } from "@/features/workflows/components/new-automation-button"
+import { HistoryToggle } from "@/features/workflows/components/history-toggle"
 import { describeTrigger } from "@/lib/automations/summary"
-import { listAutomations } from "@/queries/automations"
+import { listAutomations, listGlobalRunViews } from "@/queries/automations"
 
 const STATUS: Record<
   string,
@@ -35,7 +36,10 @@ export default async function WorkflowsPage() {
   const { userId } = await auth()
   if (!userId) throw new Error("Unauthorized")
 
-  const automations = await listAutomations(userId)
+  const [automations, history] = await Promise.all([
+    listAutomations(userId),
+    listGlobalRunViews({ userId, limit: 25 }),
+  ])
 
   if (automations.length === 0) {
     return (
@@ -70,6 +74,8 @@ export default async function WorkflowsPage() {
         </div>
         <NewAutomationButton />
       </div>
+
+      <HistoryToggle runs={history} />
 
       <ul className="grid gap-3 sm:grid-cols-2">
         {automations.map((automation) => {

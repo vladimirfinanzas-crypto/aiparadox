@@ -10,7 +10,14 @@ import {
   pcJobs,
   workflows,
 } from "@/db/schema"
-import { isDeviceOnline } from "@/lib/desktop-devices"
+import { isDeviceOnline, listDevices } from "@/lib/desktop-devices"
+import {
+  buildLiveSessionView,
+  emptyLiveSessionView,
+  FINISHED_SESSION_WINDOW_MS,
+  type DeviceSummary,
+  type LiveSessionView,
+} from "@/lib/live/session"
 import {
   countLiveItems,
   resourcePathFrom,
@@ -366,4 +373,84 @@ export async function getLiveFeed(userId: string): Promise<LiveFeed> {
     devices: { total: devices.length, online },
     generatedAt: new Date().toISOString(),
   }
+}
+
+// ---------------------------------------------------------------------------
+// The session behind the feed: is browser work happening right now, and where?
+// ---------------------------------------------------------------------------
+
+/** How many computers this person has, and which of them are reachable. */
+async function deviceSummary(userId: string): Promise<DeviceSummary> {
+  const devices = await listDevices(userId)
+  return {
+    total: devices.length,
+    online: devices.filter((device) => isDeviceOnline(device)).length,
+    paused: devices.some((device) => device.status === "paused"),
+  }
+}
+
+/**
+ * The one session worth showing: the newest browser task that is still working,
+ * or the last one if it ended recently.
+ *
+ * Scoped by user id in the query itself, so a task id from another account never
+ * reaches the panel. A task that has not chosen cloud or local yet is not a
+ * session — it is a question, and the panel says so instead of guessing an
+ * environment.
+ */
+export async function getLiveSession(userId: string): Promise<LiveSessionView> {
+  const device = await deviceSummary(userId)
+
+  // 1. Active work first: queued or running, with an environment already chosen.
+  const [active] = await db
+    .select()
+    .from(executionTasks)
+    .where(
+      and(
+        eq(executionTasks.userId, userId),
+        inArray(executionTasks.status, ["queued", "running"]),
+        sql`${executionTasks.environment} is not null`
+      )
+    )
+    .orderBy(desc(executionTasks.createdAt))
+    .limit(1)
+
+  if (active) return buildLiveSessionView({ task: active, device })
+
+  // 2. Otherwise the most recent finished session, but only for a short window:
+  // yesterday's browser is history, not a live view.
+  const [finished] = await db
+    .select()
+    .from(executionTasks)
+    .where(
+      and(
+        eq(executionTasks.userId, userId),
+        sql`${executionTasks.environment} is not null`,
+        gte(executionTasks.completedAt, new Date(Date.now() - FINISHED_SESSION_WINDOW_MS))
+      )
+    )
+    .orderBy(desc(executionTasks.completedAt))
+    .limit(1)
+
+  if (finished) return buildLiveSessionView({ task: finished, device })
+
+  // 3. Nothing running: is a question still on screen? That is not a session,
+  // but the panel should say why there is no viewport instead of showing nothing.
+  const [pending] = await db
+    .select({ id: executionTasks.id })
+    .from(executionTasks)
+    .where(
+      and(
+        eq(executionTasks.userId, userId),
+        eq(executionTasks.status, "awaiting_execution_environment"),
+        gte(
+          executionTasks.createdAt,
+          new Date(Date.now() - FINISHED_SESSION_WINDOW_MS)
+        )
+      )
+    )
+    .orderBy(desc(executionTasks.createdAt))
+    .limit(1)
+
+  return emptyLiveSessionView(device, Boolean(pending))
 }

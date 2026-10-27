@@ -858,6 +858,32 @@ export type AiProviderSetting = typeof aiProviderSettings.$inferSelect
 export type NewAiProviderSetting = typeof aiProviderSettings.$inferInsert
 
 /**
+ * The model a person chose to lead one role.
+ *
+ * Only the identity is stored. Capabilities, free tier and the rest of the
+ * ladder are read from the catalogue at call time, so a model that is removed
+ * from the catalogue — or loses a capability — stops being used instead of being
+ * applied on stale facts.
+ */
+export const aiModelPreferences = pgTable(
+  "ai_model_preferences",
+  {
+    userId: text("user_id").notNull(),
+    // 'general' | 'fast' | 'code' | 'reasoner' | 'vision' | 'creative' | 'evaluator'
+    role: text("role").notNull(),
+    provider: text("provider").notNull(),
+    modelId: text("model_id").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.role] })]
+)
+
+export type AiModelPreference = typeof aiModelPreferences.$inferSelect
+export type NewAiModelPreference = typeof aiModelPreferences.$inferInsert
+
+/**
  * An API the person added themselves.
  *
  * `status` distinguishes "the fields are saved" from "a request worked":

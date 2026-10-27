@@ -15,7 +15,9 @@ import {
   ROLE_REQUIREMENTS,
   catalogForRole,
   missingCapabilities,
+  withModelPreference,
   type ProviderSelection,
+  type RoleModelPreference,
 } from "./models"
 import { logAiEvent, newRequestId, type AiLogEvent } from "./observability"
 import {
@@ -141,6 +143,12 @@ export type RoutedModelOptions = {
    * selection/fallback system.
    */
   providerSelection?: ProviderSelection
+  /**
+   * The model this person chose to lead the role, from the integration centre.
+   * It is hoisted to the front of the ladder and nothing else: if it is gone or
+   * cannot meet the call's requirements, the normal fallback answers.
+   */
+  modelPreference?: RoleModelPreference
   deps?: Partial<RouterDeps>
   /** Hard cap on provider calls for one request (default 6). */
   maxProviderCalls?: number
@@ -191,13 +199,16 @@ export function planForRole(
   role: ModelRole,
   options: Pick<
     RoutedModelOptions,
-    "requirements" | "candidates" | "providerSelection"
+    "requirements" | "candidates" | "providerSelection" | "modelPreference"
   > = {}
 ): RolePlan {
   return buildPlan(
     role,
     requirementsFor(role, options.requirements),
-    options.candidates ?? catalogForRole(role, options.providerSelection)
+    withModelPreference(
+      options.candidates ?? catalogForRole(role, options.providerSelection),
+      options.modelPreference
+    )
   )
 }
 
@@ -482,7 +493,10 @@ export function createRoutedModel(options: RoutedModelOptions): LanguageModel {
     return buildPlan(
       role,
       required,
-      options.candidates ?? catalogForRole(role, options.providerSelection)
+      withModelPreference(
+        options.candidates ?? catalogForRole(role, options.providerSelection),
+        options.modelPreference
+      )
     )
   }
 

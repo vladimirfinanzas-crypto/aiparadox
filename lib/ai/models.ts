@@ -446,6 +446,30 @@ export type ProviderSelection = {
 }
 
 /**
+ * One model a person chose to lead a role.
+ *
+ * Only the identity is stored: the rest of the candidate (capabilities, free
+ * tier, note) is resolved from the catalogue on every read, so a model that is
+ * removed or loses a capability is dropped instead of being used on stale facts.
+ */
+export type RoleModelPreference = { provider: ProviderId; modelId: string }
+
+/** The catalogued candidate this preference names, if it still exists. */
+export function catalogCandidateFor(
+  role: ModelRole,
+  preference: RoleModelPreference,
+  selection?: ProviderSelection
+): ModelCandidate | null {
+  return (
+    catalogForRole(role, selection).find(
+      (candidate) =>
+        candidate.provider === preference.provider &&
+        candidate.modelId === preference.modelId
+    ) ?? null
+  )
+}
+
+/**
  * The candidates for one role, in routing order.
  *
  * `selection` narrows or reorders the providers for one person's turn. It can
@@ -501,6 +525,32 @@ function dedupe(candidates: ModelCandidate[]): ModelCandidate[] {
     seen.add(key)
     return true
   })
+}
+
+/**
+ * Puts the person's chosen model first, keeping the rest of the ladder intact.
+ *
+ * Hoisting only reorders: if the chosen model cannot satisfy the call (it is
+ * dropped by the role's requirements), fallback still happens normally instead
+ * of the request failing on a preference.
+ */
+export function withModelPreference(
+  candidates: ModelCandidate[],
+  preference?: RoleModelPreference
+): ModelCandidate[] {
+  if (!preference) return candidates
+  const index = candidates.findIndex(
+    (candidate) =>
+      candidate.provider === preference.provider &&
+      candidate.modelId === preference.modelId
+  )
+  if (index <= 0) return candidates
+
+  const reordered = [...candidates]
+  const [chosen] = reordered.splice(index, 1)
+  if (!chosen) return candidates
+  reordered.unshift(chosen)
+  return reordered
 }
 
 /** Every model id the catalog can reach, once each. */

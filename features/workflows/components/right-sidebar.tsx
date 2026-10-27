@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useReactFlow, useStore } from "@xyflow/react"
-import { Sparkles, Trash2 } from "lucide-react"
+import { Copy, Sparkles, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -21,11 +21,11 @@ import { GodfatherPanel } from "@/features/workflows/components/godfather-panel"
 import { NodeIcon } from "@/features/workflows/components/node-icon"
 import { useUpstreamConnections } from "@/features/workflows/hooks/use-upstream-connections"
 import {
+  nodeCategories,
   nodeRegistry,
   type NodeDefinition,
   type NodeField,
   type NodeType,
-  type StepNodeKind,
   type StepNodeType,
 } from "@/features/workflows/nodes/node-registry"
 
@@ -88,7 +88,7 @@ function Field({
 }
 
 function Inspector({ node }: { node: StepNodeType | undefined }) {
-  const { updateNodeData, deleteElements } = useReactFlow<StepNodeType>()
+  const { updateNodeData, deleteElements, addNodes, getNodes } = useReactFlow<StepNodeType>()
   const connections = useUpstreamConnections()
   const [activeFieldKey, setActiveFieldKey] = useState<string | null>(null)
 
@@ -166,29 +166,54 @@ function Inspector({ node }: { node: StepNodeType | undefined }) {
         )}
 
         {node.data.type !== "start" && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-2 justify-start text-destructive"
-            onClick={() => {
-              deleteElements({ nodes: [{ id: node.id }] })
-              toast.success("Bloque eliminado")
-            }}
-          >
-            <Trash2 className="size-3.5" />
-            Eliminar bloque
-          </Button>
+          <div className="mt-2 flex flex-col gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start gap-2.5"
+              onClick={() => {
+                const nodes = getNodes()
+                const count = nodes.filter(
+                  (candidate) => candidate.data.type === node.data.type
+                ).length
+                // A copy keeps the configuration but not the wiring: a
+                // duplicated block must be connected on purpose, never inherit
+                // an edge the person did not draw.
+                addNodes({
+                  id: crypto.randomUUID(),
+                  type: "step",
+                  position: { x: node.position.x + 48, y: node.position.y + 48 },
+                  data: {
+                    type: node.data.type,
+                    kind: node.data.kind,
+                    title: `${def.label} ${count + 1}`,
+                    values: { ...node.data.values },
+                  },
+                })
+                toast.success("Bloque duplicado")
+              }}
+            >
+              <Copy className="size-3.5" />
+              Duplicar bloque
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="justify-start text-destructive"
+              onClick={() => {
+                deleteElements({ nodes: [{ id: node.id }] })
+                toast.success("Bloque eliminado")
+              }}
+            >
+              <Trash2 className="size-3.5" />
+              Eliminar bloque
+            </Button>
+          </div>
         )}
       </div>
     </Section>
   )
 }
-
-const sections: { kind: StepNodeKind; label: string }[] = [
-  { kind: "trigger", label: "Disparadores" },
-  { kind: "action", label: "Acciones" },
-  { kind: "condition", label: "Lógica" },
-]
 
 const definitions = Object.values(nodeRegistry)
 
@@ -225,18 +250,22 @@ function Palette() {
 
   return (
     <Section title="Bloques">
-      <Accordion multiple defaultValue={sections.map((section) => section.kind)} className="px-3 py-2">
-        {sections.map((section) => {
-          const items = definitions.filter((def) => def.kind === section.kind)
+      <Accordion
+        multiple
+        defaultValue={nodeCategories.map((category) => category.id)}
+        className="px-3 py-2"
+      >
+        {nodeCategories.map((category) => {
+          const items = definitions.filter((def) => def.category === category.id)
           if (items.length === 0) return null
           return (
             <AccordionItem
-              key={section.kind}
-              value={section.kind}
+              key={category.id}
+              value={category.id}
               className="not-last:border-b-0"
             >
               <AccordionTrigger className="py-2 text-xs font-medium text-muted-foreground hover:no-underline">
-                {section.label}
+                {category.label}
               </AccordionTrigger>
               <AccordionContent className="flex flex-col gap-0.5">
                 {items.map((def) => (

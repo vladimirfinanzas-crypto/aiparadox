@@ -14,11 +14,13 @@ import {
   CalendarClock,
   CircleAlert,
   Play,
+  Redo2,
   Save,
   ShieldCheck,
   Square,
   Trash2,
   TriangleAlert,
+  Undo2,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -49,7 +51,8 @@ import {
 import { Canvas } from "@/features/workflows/components/canvas"
 import { HistoryPanel, type RunView } from "@/features/workflows/components/history-panel"
 import { RightSidebar } from "@/features/workflows/components/right-sidebar"
-import { RunStepsProvider } from "@/features/workflows/components/run-context"
+import { useGraphHistory } from "@/features/workflows/hooks/use-graph-history"
+import { NodeIssuesProvider, RunStepsProvider } from "@/features/workflows/components/run-context"
 import {
   definitionFromCanvas,
   definitionKey,
@@ -118,12 +121,53 @@ export function Editor({
     [base, name, nodes, edges]
   )
 
+  const history = useGraphHistory({ nodes, edges, setNodes, setEdges })
+  const markExternal = history.markExternal
+
+  // Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z, the way every editor works. Typed text
+  // keeps its own native undo: the shortcut only fires outside inputs.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return
+      event.preventDefault()
+      if (event.shiftKey) {
+        history.redo()
+      } else {
+        history.undo()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [history])
+
   const report = useMemo(() => validateDefinition(definition), [definition])
+
+  // Which block is wrong, in the block's own words — the canvas paints these on
+  // the node so the banner up top and the red border always say the same thing.
+  const issuesByNode = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const issue of report.errors) {
+      if (issue.nodeId && !map[issue.nodeId]) map[issue.nodeId] = issue.message
+    }
+    return map
+  }, [report.errors])
   const dirty = definitionKey(definition) !== savedJson
 
   const applyServerDefinition = useCallback(
     (next: AutomationDefinition, nextVersion: number, nextStatus: string) => {
       const graph = definitionToGraph(next)
+      // A server-confirmed flow replaces the canvas wholesale: it is a new
+      // baseline, not a step the person took, so it is not an undo target.
+      markExternal()
       setBase(next)
       setName(next.name)
       setNodes(graph.nodes)
@@ -134,7 +178,7 @@ export function Editor({
       setSaveState("saved")
       setSavedAt(Date.now())
     },
-    [setEdges, setNodes]
+    [setEdges, setNodes, markExternal]
   )
 
   const save = useCallback(
@@ -270,6 +314,16 @@ export function Editor({
   }
 
   const remove = () => {
+    // Deleting takes the automation and its whole run history with it, so it
+    // asks first — the same confirmation the Workspace panels use.
+    if (
+      !window.confirm(
+        "¿Eliminar esta automatización y su historial de ejecuciones? Esta acción no se puede deshacer."
+      )
+    ) {
+      return
+    }
+
     startAction(async () => {
       const result = await deleteAutomationAction(automationId)
       if (!result.ok) {
@@ -340,6 +394,29 @@ export function Editor({
         </span>
 
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8"
+            aria-label="Deshacer"
+            title="Deshacer (Ctrl+Z)"
+            disabled={!history.canUndo}
+            onClick={() => history.undo()}
+          >
+            <Undo2 className="size-4" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8"
+            aria-label="Rehacer"
+            title="Rehacer (Ctrl+Shift+Z)"
+            disabled={!history.canRedo}
+            onClick={() => history.redo()}
+          >
+            <Redo2 className="size-4" />
+          </Button>
+
           <Button
             size="sm"
             variant="outline"
@@ -453,6 +530,7 @@ export function Editor({
 
       <ReactFlowProvider>
         <RunStepsProvider steps={stepStates} live={hasLiveRun}>
+          <NodeIssuesProvider issues={issuesByNode}>
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1">
               <Canvas
@@ -470,6 +548,7 @@ export function Editor({
               onApplyDefinition={applyGodfather}
             />
           </div>
+          </NodeIssuesProvider>
         </RunStepsProvider>
       </ReactFlowProvider>
 
