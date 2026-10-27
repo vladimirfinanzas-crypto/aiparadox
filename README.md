@@ -42,7 +42,7 @@ Plataforma de automatización con IA. La persona describe lo que quiere consegui
 
 ## Configuración local
 
-Requisitos: **Node.js 20.9+**, una base **Postgres** (p. ej. Neon), cuentas en **Clerk** y **Trigger.dev**, y **Python 3** solo si vas a probar el Desktop Agent.
+Requisitos: **Node.js 22.12+** (el árbol de dependencias lo exige: los paquetes del AI SDK declaran `>=22` y Vitest 5 `^22.12`; Next 16 por sí solo pediría ≥ 20.9), una base **Postgres** (p. ej. Neon), cuentas en **Clerk** y **Trigger.dev**, y **Python 3** solo si vas a probar el Desktop Agent.
 
 ```bash
 # 1. Dependencias
@@ -108,7 +108,8 @@ La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin c
 - Esquema: `db/schema.ts` (Drizzle). Todas las tablas llevan `user_id` y las consultas de `queries/` filtran por el usuario de la sesión.
 - Migraciones SQL versionadas en `drizzle/` (`0000`…`0008`), **aditivas y re-ejecutables** (`if not exists` / `on conflict`).
 - El runner es `scripts/apply-migration.mjs <archivo.sql>` (usa la conexión directa, `DATABASE_URL_UNPOOLED`).
-- ⚠️ `drizzle/meta/_journal.json` solo registra `0000`: **`npm run db:migrate` (drizzle-kit) no aplica `0001`–`0008`**. Aplica esos archivos con el runner, en orden, como muestra la sección anterior. `npm run db:generate` sigue siendo el camino para *crear* una migración nueva a partir de cambios de esquema.
+- ⚠️ **`npm run db:migrate` (drizzle-kit) no es el camino de despliegue.** El journal registra `0000_melted_leper_queen` y `0001_futuristic_gideon`: esta última es una migración generada por duplicado (crea de nuevo tablas que ya crean `0001_desktop_devices`…`0006`, **sin** `if not exists`, y no incluye las tablas de `0007`/`0008`). Aplica siempre los archivos `0000`–`0008` con el runner, en orden, como muestra la sección anterior.
+- `npm run db:generate` sirve para *crear* una migración nueva, pero revisa el SQL generado antes de aplicarlo: los snapshots de `drizzle/meta/` llegan hasta `0001`, así que regeneraría `custom_integrations`, `mcp_servers`, `ai_provider_settings` y `ai_model_preferences` (que ya existen desde `0007`/`0008`). Elimina esos `create table` duplicados del fichero generado y añádelo a la secuencia del runner.
 - **Antes de un cambio que pueda tocar datos**: copia de seguridad (`pg_dump "$DATABASE_URL" > respaldo.sql`) y restaura con `psql < respaldo.sql`. No borres ni recrees tablas como solución.
 
 ---
@@ -197,7 +198,7 @@ Detalle completo en [`desktop/README.md`](desktop/README.md). Sin agente conecta
 ```bash
 npm run lint        # ESLint (flat config; ignora cachés de build)
 npm run typecheck   # tsc --noEmit
-npm run test        # vitest run — 196 pruebas en 24 archivos (12 se omiten sin DATABASE_URL)
+npm run test        # vitest run — 339 pruebas en 40 archivos; 15 se omiten (14 necesitan DATABASE_URL, 1 una clave de IA real)
 npm run desktop:test  # pruebas del Desktop Agent (unittest de Python)
 npm run build       # build de producción de Next.js
 ```
@@ -209,7 +210,7 @@ npm run build       # build de producción de Next.js
 
 ## Despliegue
 
-**Netlify (producción: https://aiparadox.netlify.app)** — el sitio está conectado a este repositorio, así que cada push a `main` compila y despliega. `netlify.toml` fija `NODE_VERSION=22` (Next 16 exige ≥ 20.9) y `publish = ".next"`, que es lo que espera el runtime de Next.js de Netlify.
+**Netlify (producción: https://aiparadox.netlify.app)** — el sitio está conectado a este repositorio, así que cada push a `main` compila y despliega. `netlify.toml` fija `NODE_VERSION=22` (el árbol de dependencias exige Node ≥ 22.12) y `publish = ".next"`, que es lo que espera el runtime de Next.js de Netlify.
 
 El build **no** necesita base de datos ni claves de IA: el cliente Postgres y los proveedores se crean en la primera consulta, no al importar el módulo (así `next build` se puede reproducir desde un checkout limpio). Lo que sí tiene que existir en **Site configuration → Environment variables**:
 

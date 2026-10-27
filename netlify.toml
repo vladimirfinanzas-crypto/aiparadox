@@ -3,8 +3,9 @@
 # `publish = ".next"` is what Netlify's Next.js runtime expects: it rewrites the
 # output into Netlify Functions at deploy time, so this is not a static export.
 #
-# Node runs on the site's build-image default, which Netlify pins per site. No
-# NODE_VERSION here: the last build that succeeded ran without one.
+# Node is pinned explicitly: the dependency tree (AI SDK packages require >=22,
+# Vitest 5 requires >=22.12) does not run on the older build-image defaults, and
+# a silent default change would otherwise break the next deploy.
 #
 # Variables this deployment needs (Site configuration → Environment variables):
 #   DATABASE_URL, DATABASE_URL_UNPOOLED   Neon (pooled / direct)
@@ -25,6 +26,7 @@
   publish = ".next"
 
 [build.environment]
+  NODE_VERSION = "22"
   NEXT_TELEMETRY_DISABLED = "1"
   # These are public configuration identifiers, not authentication credentials.
   # Keep secret scanning enabled for all other environment variables and files.
