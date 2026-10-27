@@ -22,6 +22,10 @@
 .DS_Store
 *.pem
 
+# python bytecode (Desktop Agent / pc-agent) — never commit compiled caches
+__pycache__/
+*.py[cod]
+
 # debug
 npm-debug.log*
 yarn-debug.log*
