@@ -47,6 +47,39 @@ function assertTriggerConfigured() {
   }
 }
 
+// Reading a transcript makes a network call to Trigger.dev's storage (a
+// presigned URL, with no deadline of its own). A call that hangs never becomes
+// an error inside this action: the request just sits there until the proxy in
+// front of Render gives up and answers with an HTML error page, which the
+// browser reports as the useless "An unexpected response was received from the
+// server". Failing here instead turns that into a message that says what broke
+// and whether trying again is worth it.
+const TRANSCRIPT_TIMEOUT_MS = 15_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `${what} no respondió en ${Math.round(ms / 1000)} segundos. ` +
+            "Es una llamada a Trigger.dev, no al modelo: vuelve a intentarlo y, " +
+            "si se repite, revisa la conectividad del despliegue con la API de Trigger.dev.",
+        ),
+      )
+    }, ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
 // Billable actions are for plans that include the feature
 async function assertFeature(feature: Feature) {
   // Test version: the paywall is off entirely
@@ -90,7 +123,11 @@ export async function mintChatAccessToken(chatId: string) {
 export async function loadTranscript(params: { chatId: string }) {
   await assertChatOwner(params.chatId)
 
-  const transcript = await loadStoredTranscript(params)
+  const transcript = await withTimeout(
+    loadStoredTranscript(params),
+    TRANSCRIPT_TIMEOUT_MS,
+    "La carga del historial",
+  )
 
   // Stored untyped, but only this agent ever writes it
   return { ...transcript, messages: transcript.messages as ChatUIMessage[] }

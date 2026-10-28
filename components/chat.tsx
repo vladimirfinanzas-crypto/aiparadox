@@ -401,6 +401,44 @@ function failureToast(message: string) {
   }
 }
 
+// Opening a chat reads its history through a server action, and Next.js turns
+// anything it does not recognise in front of that call — a proxy error page, a
+// restart, a timeout — into one opaque "An unexpected response was received
+// from the server". Those are usually gone on the next attempt, so they are
+// retried here. A refusal (signed out, chat not yours, no permission) is not:
+// repeating it only delays the message that actually explains the problem.
+const TRANSIENT_LOAD_ERROR =
+  /unexpected response|failed to fetch|networkerror|load failed|timed? ?out|\b(502|503|504|522|524)\b/i
+const REFUSED_LOAD_ERROR =
+  /unauthorized|chat not found|upgrade required|not found on the server|no respondió/i
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function loadTranscriptWithRetry(
+  params: Parameters<typeof loadTranscript>[0],
+) {
+  let failure: unknown
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await loadTranscript(params)
+    } catch (cause) {
+      failure = cause
+      const message = cause instanceof Error ? cause.message : String(cause)
+      if (REFUSED_LOAD_ERROR.test(message) || !TRANSIENT_LOAD_ERROR.test(message)) {
+        break
+      }
+      if (attempt < 2) await pause(600 * 2 ** attempt)
+    }
+  }
+
+  const error = failure instanceof Error ? failure : new Error(String(failure))
+  Sentry.captureException(error, {
+    extra: { chatId: params.chatId, stage: "loadTranscript" },
+  })
+  throw error
+}
+
 // `bots` are a group chat's members to pick from; a direct chat passes none.
 // `orchestrator` is the hidden agent that fronts direct conversations; when it
 // is there and the chat is still empty, the chat opens with its welcome.
@@ -423,7 +461,7 @@ function Chat({
   })
   const { messages, isLoading, error } = useLoadTranscript(
     chatId,
-    loadTranscript,
+    loadTranscriptWithRetry,
     { transport }
   )
 
