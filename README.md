@@ -98,6 +98,8 @@ Plantilla completa en [`.env.example`](.env.example) (nombres y comentarios, sin
 | `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` / `NEXT_PUBLIC_SENTRY_DSN` | Sentry (build + runtime) | Opcional |
 | `PARADOX_PROVIDER_ORDER`, `PARADOX_DISABLED_PROVIDERS`, `PARADOX_MODEL_*`, `PARADOX_AI_MAX_*`, `PARADOX_COOLDOWN_*`, `OPENROUTER_BACKSTOP_MODEL` | Ajuste del router de IA (documentadas en la plantilla) | No |
 | `PARADOX_DESKTOP_CHANNEL` | Canal del instalador que sirve `/api/desktop/download` | No |
+| `PARADOX_LIVE_PROVIDER_TESTS`, `DEV_WORKER_BACKOFF_MS`, `DEV_WORKER_DISCONNECT_GRACE_MS` | Activan la prueba de proveedores vivos y ajustan el worker en desarrollo | Solo desarrollo/pruebas (nunca producción) |
+| `PARADOX_BUILD_CHANNEL`, `PARADOX_API_URL`, `PARADOX_SIGN_PFX`, `PARADOX_SIGN_PASSWORD`, `PARADOX_SIGN_THUMBPRINT`, `PARADOX_SIGN_PUBLISHER` (y en GitHub, `WINDOWS_CERT_*`) | Compilación y firma del Desktop Agent. Se usan **solo en la máquina de build/CI**, nunca en el servidor | Solo publicación del agente |
 
 La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin clave se omite y responden los demás (ver `docs/ai-providers.md`). Ninguna clave de servidor llega al navegador.
 
