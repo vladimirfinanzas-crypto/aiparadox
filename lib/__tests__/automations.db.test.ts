@@ -131,20 +131,25 @@ describe.skipIf(!hasDatabase)(
         config: {},
         position: { x: 0, y: 0 },
       }
-      const mail = {
-        id: "mail",
-        type: "send-email" as const,
+      // `desktop-action` instead of `send-email`: both have effects outside
+      // Paradox, so both need an approval, but only the email block asks for
+      // RESEND_API_KEY at validation time. The approval logic is what is under
+      // test here, and this keeps the suite runnable on any machine that has a
+      // database and no provider credentials.
+      const action = {
+        id: "action",
+        type: "desktop-action" as const,
         kind: "action" as const,
-        title: "Avisar",
-        config: { to: "a@b.c", subject: "Hola", body: "Resumen" },
+        title: "Abrir programa",
+        config: { action: "open", value: "notepad" },
         position: { x: 260, y: 0 },
       }
 
       const required = {
         ...emptyDefinition("Aprobación", "Europe/Madrid"),
         trigger: { kind: "cron" as const, cron: "0 9 * * 1", timezone: "Europe/Madrid" },
-        nodes: [start, mail],
-        edges: [{ id: "e1", source: "start", target: "mail" }],
+        nodes: [start, action],
+        edges: [{ id: "e1", source: "start", target: "action" }],
       }
 
       const automation = await createAutomation({
@@ -158,7 +163,7 @@ describe.skipIf(!hasDatabase)(
         workflowId: automation.id,
         version: 1,
         scopeHash: automationScopeHash(required),
-        actions: [{ nodeId: "mail", type: "send-email", label: "Avisar" }],
+        actions: [{ nodeId: "action", type: "desktop-action", label: "Abrir programa" }],
       })
 
       const approvals = await listApprovals({ userId: USER_A, workflowId: automation.id })
@@ -167,10 +172,10 @@ describe.skipIf(!hasDatabase)(
         canRunUnattended({ definition: required, version: 1, approvals, status: "active" })
       ).toEqual({ ok: true })
 
-      // Same flow, different recipient: the approval no longer covers it
+      // Same flow, different program: the approval no longer covers it
       const changed = {
         ...required,
-        nodes: [start, { ...mail, config: { ...mail.config, to: "otro@b.c" } }],
+        nodes: [start, { ...action, config: { ...action.config, value: "calc" } }],
       }
 
       const blocked = canRunUnattended({

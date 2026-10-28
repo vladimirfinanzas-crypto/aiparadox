@@ -106,9 +106,12 @@ La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin c
 ## Base de datos y migraciones
 
 - Esquema: `db/schema.ts` (Drizzle). Todas las tablas llevan `user_id` y las consultas de `queries/` filtran por el usuario de la sesión.
-- Migraciones SQL versionadas en `drizzle/` (`0000`…`0008`), **aditivas y re-ejecutables** (`if not exists` / `on conflict`).
-- El runner es `scripts/apply-migration.mjs <archivo.sql>` (usa la conexión directa, `DATABASE_URL_UNPOOLED`).
-- ⚠️ **`npm run db:migrate` (drizzle-kit) no es el camino de despliegue.** El journal registra `0000_melted_leper_queen` y `0001_futuristic_gideon`: esta última es una migración generada por duplicado (crea de nuevo tablas que ya crean `0001_desktop_devices`…`0006`, **sin** `if not exists`, y no incluye las tablas de `0007`/`0008`). Aplica siempre los archivos `0000`–`0008` con el runner, en orden, como muestra la sección anterior.
+- Migraciones SQL versionadas en `drizzle/` (`0000`…`0008`). **No todas son re-ejecutables**: `0001_desktop_devices` y `0002`–`0008` usan `if not exists` / `add column if not exists` y toleran una segunda pasada; `0000_melted_leper_queen` y `0001_futuristic_gideon` **no** (`42710` / `42P07` al repetirlas), por eso el runner las lleva en su propio registro.
+- Runner: `node scripts/migrate.mjs` (aplica lo pendiente con la conexión directa `DATABASE_URL_UNPOOLED`), `node scripts/migrate.mjs --status` (qué está aplicado y qué tablas de cada archivo faltan) y `node scripts/migrate.mjs --mark <archivo.sql>` (registrar como ya aplicado **sin ejecutarlo**, solo después de comprobarlo con `--status`). Cada archivo corre en su propia transacción: si falla, se revierte completo.
+- **Orden correcto: primero las entradas del journal, después el resto en orden alfabético** (lo que hace el runner y lo único probado contra una base nueva). Un `for f in drizzle/*.sql` pone `0001_desktop_devices` antes que `0001_futuristic_gideon` y muere con `42P07: relation "desktop_devices" already exists`.
+- ⚠️ **`npm run db:migrate` (drizzle-kit) no es el camino de despliegue.** El journal solo registra `0000_melted_leper_queen` y `0001_futuristic_gideon`: `0001_desktop_devices`…`0008` no están en él, así que drizzle-kit los saltaría. `0001_futuristic_gideon` es el snapshot generado que crea `desktop_devices`/`desktop_enrollments` y las tablas de automatizaciones, ejecuciones y versiones **sin** `if not exists`.
+- **Duplicación efectiva, verificada**: esos dos `0001` crean las mismas dos tablas de dispositivo; `0001_desktop_devices` las crea con `if not exists` y añade sus índices, así que solo es válido **después** de `0001_futuristic_gideon`.
+- ⚠️ **Base creada en el orden inverso** (dispositivos antes que `0001_futuristic_gideon`): ese archivo ya no puede aplicarse tal cual; `--status` lo mostrará con `tables missing: automation_…, executions, …` y la ejecución fallará con `42P07`. No lo marques como aplicado. Repararlo toca datos reales (añadir `if not exists` a ese SQL o extraer sus sentencias ya existentes), así que exige respaldo (`pg_dump`) y autorización explícita del propietario.
 - `npm run db:generate` sirve para *crear* una migración nueva, pero revisa el SQL generado antes de aplicarlo: los snapshots de `drizzle/meta/` llegan hasta `0001`, así que regeneraría `custom_integrations`, `mcp_servers`, `ai_provider_settings` y `ai_model_preferences` (que ya existen desde `0007`/`0008`). Elimina esos `create table` duplicados del fichero generado y añádelo a la secuencia del runner.
 - **Antes de un cambio que pueda tocar datos**: copia de seguridad (`pg_dump "$DATABASE_URL" > respaldo.sql`) y restaura con `psql < respaldo.sql`. No borres ni recrees tablas como solución.
 
@@ -119,7 +122,7 @@ La app arranca con **cualquier subconjunto** de claves de IA: un proveedor sin c
 Cinco proveedores detrás de un router (`lib/ai/model-router.ts`): OpenRouter primero; Gemini, Cerebras, Groq y Workers AI como escalera de fallback, con cuotas, cooldowns y límite de reintentos por petición.
 
 - Documentación completa: [`docs/ai-providers.md`](docs/ai-providers.md)
-- Diagnóstico en vivo: `GET /api/ai/health` (con sesión) — clave visible, modelos configurados y, con `?probe=1`, una llamada mínima a cada proveedor configurado (a través de su propio adaptador) y a cada modelo de OpenRouter, con presupuesto acotado (~8 s) para caber en una función de Netlify.
+- Diagnóstico en vivo: `GET /api/ai/health` (con sesión) — clave visible, modelos configurados y, con `?probe=1`, una llamada mínima a cada proveedor configurado (a través de su propio adaptador) y a cada modelo de OpenRouter, con presupuesto acotado (~8 s) para no agotar el tiempo de la petición.
 - Registro de herramientas del agente: [`docs/tool-registry.md`](docs/tool-registry.md)
 - Navegación de Godfather: [`docs/godfather-browser.md`](docs/godfather-browser.md)
 - **Daytona (opcional)** — sandboxes de los agentes de chat (`DAYTONA_API_KEY`).
@@ -198,40 +201,43 @@ Detalle completo en [`desktop/README.md`](desktop/README.md). Sin agente conecta
 ```bash
 npm run lint        # ESLint (flat config; ignora cachés de build)
 npm run typecheck   # tsc --noEmit
-npm run test        # vitest run — 339 pruebas en 40 archivos; 15 se omiten (14 necesitan DATABASE_URL, 1 una clave de IA real)
+npm run test        # vitest run — 339 pruebas en 40 archivos; 1 se omite (la de proveedores vivos, necesita una clave de IA real) y, sin DATABASE_URL, otras 14 (integración con BD)
 npm run desktop:test  # pruebas del Desktop Agent (unittest de Python)
 npm run build       # build de producción de Next.js
 ```
 
-- Hay pruebas **unitarias** (router de IA, fallback, motor de automatizaciones, registro de herramientas, Live View…) y pruebas **de integración contra la base de datos real** (`*.db.test.ts`: versiones de paneles, aislamiento entre usuarios, deduplicación de ejecuciones, tareas de ejecución, feed en vivo). Esas necesitan `DATABASE_URL`/`DATABASE_URL_UNPOOLED` apuntando a una base de desarrollo.
+- Hay pruebas **unitarias** (router de IA, fallback, motor de automatizaciones, registro de herramientas, Live View…) y pruebas **de integración contra la base de datos real** (`*.db.test.ts`: versiones de paneles, aislamiento entre usuarios, deduplicación de ejecuciones, tareas de ejecución, feed en vivo). Esas necesitan `DATABASE_URL`/`DATABASE_URL_UNPOOLED` apuntando a una base de desarrollo: se levanta en un minuto con `node scripts/migrate.mjs` sobre una base local o de desarrollo (ver «Base de datos y migraciones»).
 - **No hay suite E2E** (Playwright/Cypress) en el repo: los recorridos completos de UI se verifican a mano. Es una deuda documentada, no un paso fallido.
 
 ---
 
 ## Despliegue
 
-**Netlify (producción: https://aiparadox.netlify.app)** — el sitio está conectado a este repositorio, así que cada push a `main` compila y despliega. `netlify.toml` fija `NODE_VERSION=22` (el árbol de dependencias exige Node ≥ 22.12) y `publish = ".next"`, que es lo que espera el runtime de Next.js de Netlify.
+**Render (plataforma de producción)** — `render.yaml` describe el servicio: repositorio vinculado, rama `main`, `runtime: node`, `buildCommand: npm ci && npm run build`, `startCommand: npm start` y health check `GET /api/health`. Se crea una sola vez desde Render (**New + → Blueprint** apuntando a este repositorio); si ya existe un servicio para este repo, se le aplican estos mismos valores en lugar de crear uno duplicado. Después, cada push a `main` compila y despliega.
 
-El build **no** necesita base de datos ni claves de IA: el cliente Postgres y los proveedores se crean en la primera consulta, no al importar el módulo (así `next build` se puede reproducir desde un checkout limpio). Lo que sí tiene que existir en **Site configuration → Environment variables**:
+La versión de Node sale de `engines` en `package.json` (**`>=22.12 <25`**): el límite superior es intencional, porque Render resuelve un rango sin límite a la última versión de Node disponible y un major nuevo cambiaría el runtime sin ningún cambio en el repositorio. El árbol de dependencias exige Node ≥ 22.12 y todo está verificado en Node 24.
+
+El build **no** necesita base de datos ni claves de IA: el cliente Postgres y los proveedores se crean en la primera consulta, no al importar el módulo (así `next build` se puede reproducir desde un checkout limpio). Lo que sí tiene que existir en **Environment → Environment Variables** (el blueprint las crea con `sync: false` y el propietario pega el valor):
 
 | Variable | Por qué |
 |---|---|
-| `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | consultas en runtime y migraciones |
+| `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | consultas en runtime y migraciones (Neon) |
 | `CLERK_SECRET_KEY` | sesión en el servidor |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | se **inyecta en el bundle al compilar**: sin ella el deploy publica una app que no puede iniciar sesión |
 | `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SITE_URL` | URLs públicas |
 | `TRIGGER_SECRET_KEY` | chat y automatizaciones |
 
-El worker de Trigger.dev **no** lo despliega Netlify: va aparte (bloque siguiente). `GET /api/health` queda fuera del middleware de Clerk a propósito, para que el healthcheck siga respondiendo aunque la configuración de auth esté incompleta.
+Y, **cuando se active cada función** (no bloquean el arranque): claves de IA (`OPENROUTER_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `CEREBRAS_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_*`), `BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID` (navegador cloud), `RESEND_API_KEY` + `RESEND_FROM` (email), `ZERNIO_API_KEY`, `DAYTONA_API_KEY`, `INTEGRATIONS_ENCRYPTION_KEY` (centro de integraciones) y `SENTRY_*`. Clasificación completa en la sección «Variables de entorno» y en `.env.example`.
 
-**Plataforma Node (p. ej. Railway — `next.config.ts` ya lee `RAILWAY_GIT_COMMIT_SHA`):**
+El worker de Trigger.dev **no** lo despliega Render: va aparte (bloque siguiente). `GET /api/health` queda fuera del middleware de Clerk a propósito, para que el healthcheck siga respondiendo aunque la configuración de auth esté incompleta.
+
+**Migraciones en el entorno (una vez por base, antes del primer deploy que necesite tablas nuevas):**
 
 ```bash
-npm ci
-npm run build
-npm start
-# Variables de la plataforma: todas las "Sí" de la tabla de entorno
-# Healthcheck: GET /api/health → 200
+node scripts/migrate.mjs --status   # qué hay ya aplicado y qué tablas faltan
+node scripts/migrate.mjs            # aplica lo pendiente en el orden correcto
+# Con la base ya registrada, habilita en render.yaml:
+#   preDeployCommand: node scripts/migrate.mjs
 ```
 
 **Worker de Trigger.dev (obligatorio, separado del servidor web):**
@@ -250,7 +256,7 @@ VALOR --secret` (nunca las imprimas). Verificación registrada: el cron de 5
 minutos de `meter-sandboxes` pasa de `FAILED` (faltaba Daytona) a `COMPLETED`
 desde la versión `20261025.3`.
 
-**Base de datos:** aplica `drizzle/0001`–`0006` en el entorno con `node scripts/apply-migration.mjs` (son aditivas; sigue siendo recomendable un respaldo previo).
+**Base de datos:** el camino es `node scripts/migrate.mjs` (ver «Base de datos y migraciones»); `apply-migration.mjs` sigue disponible para un archivo suelto. Respaldo previo recomendable (`pg_dump`).
 
 **Cloudflare/Freebuff Sites:** existe `freebuff.open-next.config.ts` (configuración OpenNext generada) por si se publica como Worker; en esta fase **no se ha verificado un despliegue real por esa vía**.
 
@@ -268,7 +274,7 @@ desde la versión `20261025.3`.
 | «Tarea local esperando» | Desktop Agent desconectado | Abrir el agente local; el estado real está en Live View |
 | Todas las rutas responden 500 salvo `/api/health` | Faltan las claves de Clerk (`CLERK_SECRET_KEY` y, sobre todo, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`), que se inyecta al compilar | Añádelas en las variables de entorno y vuelve a desplegar |
 | El build falla en «Collecting page data» / `PLATFORM_ENV_NOT_INJECTED` | Un módulo leía `DATABASE_URL` al importarse (ya corregido: se lee en la primera consulta) | Si reaparece, busca lecturas de entorno a nivel de módulo |
-| Migración «ya existe» / columna inexistente | Base desalineada del journal | Aplica los SQL con `apply-migration.mjs` en orden; no uses `db:push` en producción |
+| Migración «ya existe» / columna inexistente | Orden alfabético o base desalineada del journal | `node scripts/migrate.mjs --status` para ver qué falta y `--mark` solo tras comprobarlo; no uses `db:push` en producción |
 | Las automatizaciones no disparan | Schedule no creado o worker caído | Comprueba `workflows.next_run_at` y el worker de Trigger.dev |
 | Errores de hidratación | Extensión del navegador o branch `typeof window` | Ver consola; el tema aplica `suppressHydrationWarning` en `<html>` |
 

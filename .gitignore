@@ -66,3 +66,6 @@ next-env.d.ts
 # A development build is a local test artifact: it is regenerated, and it must
 # never arrive in a deployment as if it were the official release.
 /public/downloads/desktop-dev.json
+
+# Local process files from a manually started server
+*.pid

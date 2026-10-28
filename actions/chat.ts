@@ -42,7 +42,7 @@ async function assertChatOwner(chatId: string) {
 function assertTriggerConfigured() {
   if (!process.env.TRIGGER_SECRET_KEY?.trim()) {
     throw new Error(
-      "Chat unavailable: TRIGGER_SECRET_KEY is not set on the server, so no turn can start. Add it to the deployment's environment (Netlify → Site configuration → Environment variables) and check that the Trigger.dev worker is deployed with the same project."
+      "Chat unavailable: TRIGGER_SECRET_KEY is not set on the server, so no turn can start. Add it to the deployment's environment (Render → Environment → Environment Variables) and check that the Trigger.dev worker is deployed with the same project."
     )
   }
 }

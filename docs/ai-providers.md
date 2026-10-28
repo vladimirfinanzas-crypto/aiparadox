@@ -282,8 +282,9 @@ Startup logs one line naming configured and missing providers:
 - Settings → Integrations → AI models shows the plan and can run the probe.
 
 The probe is **bounded**: a 4 s cap per call and an 8 s budget for the whole
-phase, so the request still fits in a Netlify synchronous function (a few
-seconds). Anything that does not fit comes back with `status: "skipped"` and
+phase, so the request still fits inside the endpoint's own time budget (a few
+seconds) on any host that kills a long request. Anything that does not fit
+comes back with `status: "skipped"` and
 `error: "probe budget spent"` instead of a 502 with no diagnosis. The budget is
 reported in the response as `probeBudgetMs`.
 

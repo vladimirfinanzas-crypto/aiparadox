@@ -136,13 +136,14 @@ export function configuredModelIds(): string[] {
   return [...ids]
 }
 
-// Every network call in this endpoint is bounded. It runs inside a Netlify
-// function, which is killed after a few seconds: an unbounded fetch would end as
-// a 502 with no diagnosis at all, which is worse than a partial answer.
+// Every network call in this endpoint is bounded. It runs inside an HTTP request
+// handler with a hard time limit (a proxy or a serverless host kills a long
+// request after a few seconds): an unbounded fetch would end as a 502 with no
+// diagnosis at all, which is worse than a partial answer.
 const CATALOGUE_TIMEOUT_MS = 4_000
 /** Per-probe cap. */
 const PROBE_TIMEOUT_MS = 4_000
-/** Whole probe phase, so `?probe=1` still fits in a synchronous function. */
+/** Whole probe phase, so `?probe=1` still fits in one request. */
 const PROBE_BUDGET_MS = 8_000
 
 async function fetchCatalogue(

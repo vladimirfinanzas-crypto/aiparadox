@@ -68,7 +68,7 @@ describe("chat actions", () => {
     expect(failure).toBeInstanceOf(Error)
     expect((failure as Error).message).toMatch(/TRIGGER_SECRET_KEY is not set/)
     // Actionable: where to set it, and that the model was never reached
-    expect((failure as Error).message).toMatch(/Netlify/)
+    expect((failure as Error).message).toMatch(/Render/)
     expect((failure as Error).message).toMatch(/no turn can start/)
     // The guard runs before the SDK does any work
     expect(sdk.startSessionCalls).toBe(0)
