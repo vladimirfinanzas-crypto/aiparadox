@@ -22,6 +22,8 @@ import {
   type PanelDocument,
   type TableRow,
 } from "@/lib/panels/document"
+import { appearanceCss, appearanceOf } from "@/lib/panels/appearance"
+import { cn } from "@/lib/utils"
 
 // ---------------------------------------------------------------------------
 // The panel runtime.
@@ -62,6 +64,15 @@ export function PanelView({
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const [state, setState] = useState<SaveState>("idle")
   const [error, setError] = useState<string | null>(null)
+
+  // The look lives in the document: three colours become custom properties on
+  // the root, layout and density become classes on the block list. Every value
+  // is already an id from the whitelist, never raw CSS.
+  const appearance = appearanceOf(document)
+  const blocksClass = cn(
+    appearance.layout === "grid" ? "grid gap-x-4 sm:grid-cols-2" : "flex flex-col",
+    appearance.density === "compact" ? "gap-y-2" : "gap-y-5"
+  )
 
   const send = async (block: PanelBlock) => {
     setState("saving")
@@ -124,7 +135,10 @@ export function PanelView({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div
+      className="flex flex-col gap-5"
+      style={appearanceCss(appearance) as React.CSSProperties}
+    >
       {!readOnly && (
         <p
           aria-live="polite"
@@ -148,6 +162,7 @@ export function PanelView({
         </p>
       )}
 
+      <div className={blocksClass}>
       {blocks.map((block) => (
         <Section key={block.id} block={block}>
           {block.type === "heading" && (
@@ -752,6 +767,7 @@ export function PanelView({
           )}
         </Section>
       ))}
+      </div>
     </div>
   )
 }
@@ -766,14 +782,24 @@ function Section({
   const framed = !["heading", "text"].includes(block.type)
   if (!framed) return <section>{children}</section>
   return (
-    <section className="rounded-2xl border border-border/40 bg-card/40 p-4">
+    // The border is the panel's own primary colour at 25% alpha, written by
+    // appearanceCss — a document can only ever pick a palette id, so there is
+    // nothing here that could carry arbitrary CSS.
+    <section
+      className="rounded-2xl border p-4"
+      style={{ borderColor: "var(--panel-border)" }}
+    >
       {children}
     </section>
   )
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="mb-2 text-sm font-medium">{children}</h3>
+  return (
+    <h3 className="mb-2 text-sm font-medium" style={{ color: "var(--panel-primary)" }}>
+      {children}
+    </h3>
+  )
 }
 
 function EmptyLine({ children }: { children: React.ReactNode }) {

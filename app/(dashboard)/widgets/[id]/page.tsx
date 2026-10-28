@@ -6,6 +6,7 @@ import { notFound } from "next/navigation"
 
 import { getWidget, updatePanelDetails } from "@/actions/widget"
 import { PanelView } from "@/components/panels/panel-view"
+import { PanelAppearanceForm } from "@/components/panels/appearance-picker"
 import { WidgetActions } from "@/components/widget-actions"
 import {
   PanelToolbar,
@@ -16,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { readPanelDocument } from "@/lib/panels/document"
+import { appearanceOf } from "@/lib/panels/appearance"
 import { listWorkspaceVersions } from "@/queries/workspace"
 
 export async function generateMetadata({
@@ -178,6 +180,18 @@ export default async function WidgetPage({
             </p>
           </div>
         </form>
+
+        <div className="mt-5 border-t border-border/40 pt-4">
+          <span className="mb-1 block text-sm font-medium">Apariencia</span>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Colores, distribución y densidad del panel. Se guardan al instante y
+            no crean una versión nueva.
+          </p>
+          <PanelAppearanceForm
+            widgetId={widget.id}
+            value={appearanceOf(document)}
+          />
+        </div>
 
         <p className="mt-4 flex items-center gap-1.5 border-t border-border/40 pt-3 text-[11px] text-muted-foreground">
           <SparklesIcon className="size-3" aria-hidden />

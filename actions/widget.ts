@@ -18,6 +18,13 @@ import {
   createDocument,
   readPanelDocument,
 } from "@/lib/panels/document"
+import {
+  appearanceOf,
+  normalizeAppearance,
+  panelColors,
+  panelDensities,
+  panelLayouts,
+} from "@/lib/panels/appearance"
 
 export async function listWidgets() {
   const { isAuthenticated, userId } = await auth()
@@ -146,9 +153,15 @@ export async function updatePanelDetails(formData: FormData) {
   const widget = await getWidget(id)
   if (!widget) throw new Error("Widget not found")
 
+  // The existing document is read first: name and purpose are two fields of a
+  // panel that already has an appearance and saved actions, and rebuilding it
+  // from scratch here used to silently reset both.
+  const previous = readPanelDocument(widget.config)
   const document = createDocument({
     description,
-    blocks: readPanelDocument(widget.config).blocks,
+    appearance: previous.appearance,
+    actions: previous.actions,
+    blocks: previous.blocks,
   })
 
   await db
@@ -162,6 +175,76 @@ export async function updatePanelDetails(formData: FormData) {
 
   revalidatePath("/widgets", "layout")
   revalidatePath(`/widgets/${id}`)
+}
+
+function oneOf<T extends string>(
+  raw: unknown,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  const text = typeof raw === "string" ? raw.trim().toLowerCase() : ""
+  return (allowed as readonly string[]).includes(text) ? (text as T) : fallback
+}
+
+// Saves the panel's look: colour, surface, highlight, layout and density.
+// Every value goes through the same whitelist the renderer uses, so a posted
+// value outside the palette falls back to the default instead of reaching the
+// style attribute. The blocks are untouched — this never creates a version.
+export async function updatePanelAppearance(formData: FormData) {
+  const id = String(formData.get("id") ?? "")
+  const widget = await getWidget(id)
+  if (!widget) throw new Error("Widget not found")
+
+  const previous = readPanelDocument(widget.config)
+  const base = appearanceOf(previous)
+  const chosen = {
+    ...base,
+    color: oneOf(
+      formData.get("color"),
+      panelColors.map((entry) => entry.id),
+      base.color
+    ),
+    background: oneOf(
+      formData.get("background"),
+      panelColors.map((entry) => entry.id),
+      base.background
+    ),
+    accent: oneOf(
+      formData.get("accent"),
+      panelColors.map((entry) => entry.id),
+      base.accent
+    ),
+    layout: oneOf(
+      formData.get("layout"),
+      panelLayouts.map((entry) => entry.id),
+      base.layout
+    ),
+    density: oneOf(
+      formData.get("density"),
+      panelDensities.map((entry) => entry.id),
+      base.density
+    ),
+  }
+
+  const document = createDocument({
+    description: previous.description,
+    appearance: normalizeAppearance(chosen),
+    actions: previous.actions,
+    blocks: previous.blocks,
+  })
+
+  await db
+    .update(widgets)
+    .set({
+      config: configFromDocument(widget.config, document),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(widgets.id, id), eq(widgets.userId, widget.userId)))
+
+  revalidatePath("/widgets", "layout")
+  revalidatePath(`/widgets/${id}`)
+
+  return { ok: true as const }
 }
 
 // Copies a panel, its layout and everything saved in it. The copy starts as a

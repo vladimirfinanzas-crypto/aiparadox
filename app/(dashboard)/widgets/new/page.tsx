@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation"
 import { ArrowLeftIcon, CheckIcon, PlusIcon, SparklesIcon } from "lucide-react"
 
 import { createWorkspaceFromProposalAction } from "@/actions/workspace"
+import { AppearanceFields } from "@/components/panels/appearance-picker"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { createDocument } from "@/lib/panels/document"
+import { DEFAULT_APPEARANCE, type PanelAppearance } from "@/lib/panels/appearance"
 import { panelTemplates } from "@/lib/panels/templates"
 
 export default function NewWidgetPage() {
@@ -21,6 +23,7 @@ export default function NewWidgetPage() {
   const [purpose, setPurpose] = useState(
     panelTemplates[0].document.description ?? ""
   )
+  const [appearance, setAppearance] = useState<PanelAppearance>(DEFAULT_APPEARANCE)
   const [error, setError] = useState<string | null>(null)
 
   const template =
@@ -46,6 +49,7 @@ export default function NewWidgetPage() {
 
     const config = createDocument({
       description: purpose,
+      appearance,
       blocks: template.document.blocks,
     })
 
@@ -156,6 +160,19 @@ export default function NewWidgetPage() {
             placeholder="Una línea que explique el panel."
             className="min-h-20"
             maxLength={400}
+            disabled={pending}
+          />
+        </div>
+
+        <div>
+          <span className="mb-2 block text-sm font-medium">Apariencia</span>
+          <p className="mb-2 -mt-1 text-xs text-muted-foreground">
+            Colores, distribución y densidad. Puedes cambiarlos después desde el
+            panel.
+          </p>
+          <AppearanceFields
+            value={appearance}
+            onChange={setAppearance}
             disabled={pending}
           />
         </div>
