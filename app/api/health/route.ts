@@ -41,8 +41,29 @@ const OPTIONAL = [
 
 const isPresent = (key: string) => (process.env[key] ?? "").trim().length > 0
 
-export function GET(request: Request) {
-  const wantsEnv = new URL(request.url).searchParams.get("env") === "1"
+export async function GET(request: Request) {
+  const params = new URL(request.url).searchParams
+
+  // `?db=1` runs a read-only `select 1` through the same pool the app uses, so
+  // "the server is up" can be told apart from "the database answers". Only the
+  // driver's error code is returned: never the message, never the DSN.
+  if (params.get("db") === "1") {
+    try {
+      const { getDb } = await import("@/db")
+      await getDb().$client.query("select 1")
+      return Response.json({ status: "ok", db: "ok" })
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code ?? "unknown"
+      // 503 so this can be used as a healthcheck path when the operator wants
+      // "up AND connected" instead of "up".
+      return Response.json(
+        { status: "degraded", db: "error", code },
+        { status: 503 },
+      )
+    }
+  }
+
+  const wantsEnv = params.get("env") === "1"
   if (!wantsEnv) return Response.json({ status: "ok" })
 
   const report = (keys: readonly string[]) =>
