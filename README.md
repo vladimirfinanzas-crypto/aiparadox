@@ -226,12 +226,26 @@ El build **no** necesita base de datos ni claves de IA: el cliente Postgres y lo
 | `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | consultas en runtime y migraciones (Neon) |
 | `CLERK_SECRET_KEY` | sesión en el servidor |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | se **inyecta en el bundle al compilar**: sin ella el deploy publica una app que no puede iniciar sesión |
-| `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SITE_URL` | URLs públicas |
+| `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SITE_URL` | URLs públicas: **las dos = `https://aiparadox.onrender.com`**. Si faltan, la app arranca y el healthcheck responde 200, pero los enlaces de OAuth de Zernio y la orden de instalación del Desktop Agent apuntan a `http://localhost:3000` y el `canonical`/`og:url` publica `https://paradox.app` |
 | `TRIGGER_SECRET_KEY` | chat y automatizaciones |
 
 Y, **cuando se active cada función** (no bloquean el arranque): claves de IA (`OPENROUTER_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `CEREBRAS_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_*`), `BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID` (navegador cloud), `RESEND_API_KEY` + `RESEND_FROM` (email), `ZERNIO_API_KEY`, `DAYTONA_API_KEY`, `INTEGRATIONS_ENCRYPTION_KEY` (centro de integraciones) y `SENTRY_*`. Clasificación completa en la sección «Variables de entorno» y en `.env.example`.
 
 El worker de Trigger.dev **no** lo despliega Render: va aparte (bloque siguiente). `GET /api/health` queda fuera del middleware de Clerk a propósito, para que el healthcheck siga respondiendo aunque la configuración de auth esté incompleta.
+
+**Comprobación tras el primer deploy** (todo público, sin credenciales):
+
+```bash
+curl -s https://aiparadox.onrender.com/api/health     # {"status":"ok"}
+curl -s https://aiparadox.onrender.com/ | grep canonical   # debe decir onrender.com
+curl -s -o /dev/null -w '%{http_code}\n' https://aiparadox.onrender.com/sign-in  # 200
+# 401 en /api/ai/health es correcto: esa ruta exige sesión
+```
+
+Si el `canonical` sigue en `paradox.app`, falta `NEXT_PUBLIC_SITE_URL`; si las
+conexiones de integraciones o la orden del agente devuelven `localhost`, falta
+`NEXT_PUBLIC_APP_URL`. Las dos se **compilan** con `NEXT_PUBLIC_*`, así que
+cambiarlas obliga a **rebuild**, no basta con reiniciar el proceso.
 
 **Migraciones en el entorno (una vez por base, antes del primer deploy que necesite tablas nuevas):**
 
@@ -251,6 +265,13 @@ npx --yes trigger.dev@4.7.4 report health -e prod # salud del worker
 npx --yes trigger.dev@4.7.4 env list -e prod     # variables configuradas (sin valores)
 # Requiere TRIGGER_SECRET_KEY y el proyecto configurado en trigger.config.ts
 ```
+
+Cada tarea corre en el worker de Trigger.dev, con **su propio entorno**: lo que
+está en Render no llega aquí. Además de las claves de IA, BROWSERBASE y
+RESEND_API_KEY, hace falta `NEXT_PUBLIC_APP_URL` (el `redirect_url` de la tool
+`social_connect` se construye con ella; sin valor sale vacío y Zernio no puede
+devolver a la app) y `RESEND_FROM`. `DAYTONA_API_KEY` es opcional: `meter-sandboxes`
+se omite con un aviso en lugar de fallar si no existe.
 
 El worker de producción ya está desplegado (proyecto `Automacion`, entorno
 `prod`). Sus variables se cargan con `npx trigger.dev@4.7.4 env set NOMBRE

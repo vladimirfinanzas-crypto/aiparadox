@@ -50,18 +50,39 @@ services:
       # an app that can never sign anyone in.
       - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
         sync: false
+      # REQUIRED, and the two most often forgotten: without them the app boots
+      # and answers /api/health, but quietly generates wrong URLs.
+      #   NEXT_PUBLIC_APP_URL  -> https://aiparadox.onrender.com
+      #     Fallback is http://localhost:3000, so with it missing the Desktop
+      #     Agent setup command and every Zernio OAuth redirect point at the
+      #     person's own machine instead of this service.
+      #   NEXT_PUBLIC_SITE_URL -> https://aiparadox.onrender.com
+      #     Fallback is https://paradox.app, so canonical and og:url advertise a
+      #     domain this service does not own.
       - key: NEXT_PUBLIC_APP_URL # public URL of this service
         sync: false
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
       - key: TRIGGER_SECRET_KEY # chat + automations worker
         sync: false
-      # Optional, per feature (add them in the dashboard when enabling it):
-      #   OPENROUTER_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, CEREBRAS_API_KEY,
-      #   GROQ_API_KEY, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN,
-      #   BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID,
-      #   RESEND_API_KEY, RESEND_FROM, ZERNIO_API_KEY, DAYTONA_API_KEY,
-      #   INTEGRATIONS_ENCRYPTION_KEY,
-      #   SENTRY_ORG, SENTRY_PROJECT, SENTRY_AUTH_TOKEN, NEXT_PUBLIC_SENTRY_DSN
+      # Feature-scoped: an empty value is the documented "off" state, so these
+      # slots exist and the owner pastes a value only when enabling the feature.
+      #   AI providers: OPENROUTER_API_KEY (primary), GOOGLE_GENERATIVE_AI_API_KEY,
+      #     CEREBRAS_API_KEY, GROQ_API_KEY, CLOUDFLARE_ACCOUNT_ID,
+      #     CLOUDFLARE_API_TOKEN
+      #   Browserbase: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID
+      #   Email: RESEND_API_KEY + RESEND_FROM (without RESEND_FROM, Resend sends
+      #     from its onboarding@resend.dev test domain only)
+      #   Others: ZERNIO_API_KEY, DAYTONA_API_KEY (sandbox meter skips cleanly
+      #     without it), SENTRY_ORG, SENTRY_PROJECT, SENTRY_AUTH_TOKEN,
+      #   NEXT_PUBLIC_SENTRY_DSN
+      - key: RESEND_FROM # verified sending domain; optional
+        sync: false
+      # Settings -> Integrations refuses to save a credential without it (AES-
+      # 256-GCM, `openssl rand -base64 32`). Deliberately no plaintext fallback.
+      - key: INTEGRATIONS_ENCRYPTION_KEY
+        sync: false
       # Full list with purpose and required/optional status: README →
-      # "Variables de entorno" and .env.example.
+      # "Variables de entorno" and .env.example. Every AI/Browserbase/Resend/
+      # Zernio key used by a Trigger.dev task must ALSO be set in trigger.dev;
+      # that worker has its own environment and does not read these values.
