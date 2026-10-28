@@ -11,6 +11,7 @@ import {
   Pointer,
   ScanText,
   Share2,
+  Webhook,
   type LucideIcon,
 } from "lucide-react"
 
@@ -82,6 +83,7 @@ const categories: Record<NodeType, NodeCategoryId> = {
   "desktop-action": "desktop",
   "send-email": "integrations",
   "publish-social": "integrations",
+  "http-request": "integrations",
   condition: "logic",
   delay: "logic",
 }
@@ -96,6 +98,7 @@ const icons: Record<NodeType, LucideIcon> = {
   "send-email": Mail,
   "publish-social": Share2,
   "desktop-action": MonitorSmartphone,
+  "http-request": Webhook,
   condition: GitBranch,
   delay: Clock,
 }
@@ -110,6 +113,7 @@ const accents: Record<NodeType, string> = {
   "send-email": "bg-teal-500 text-white",
   "publish-social": "bg-fuchsia-500 text-white",
   "desktop-action": "bg-orange-500 text-white",
+  "http-request": "bg-cyan-600 text-white",
   condition: "bg-indigo-500 text-white",
   delay: "bg-slate-500 text-white",
 }

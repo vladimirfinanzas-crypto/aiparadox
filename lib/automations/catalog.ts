@@ -16,6 +16,7 @@ export type AutomationNodeType =
   | "send-email"
   | "publish-social"
   | "desktop-action"
+  | "http-request"
   | "condition"
   | "delay"
 
@@ -253,6 +254,35 @@ export const nodeCatalog = {
     ],
     outputs: [{ path: "result", label: "Result" }],
     effects: ["controla el equipo del usuario"],
+  },
+  "http-request": {
+    type: "http-request",
+    label: "API Request",
+    kind: "action",
+    description:
+      "Calls an API: the ones you added in Settings, or any public endpoint.",
+    environment: "cloud",
+    fields: [
+      {
+        key: "url",
+        label: "URL",
+        placeholder: "https://api.example.com/v1/records",
+        required: true,
+      },
+      { key: "method", label: "Method", placeholder: "GET" },
+      {
+        key: "body",
+        label: "Body (JSON, optional)",
+        placeholder: "{\"title\":\"Hola\"}",
+        multiline: true,
+      },
+    ],
+    outputs: [
+      { path: "status", label: "HTTP status" },
+      { path: "ok", label: "Success" },
+      { path: "body", label: "Response body" },
+    ],
+    effects: ["envía datos a una API externa"],
   },
   condition: {
     type: "condition",

@@ -5,6 +5,7 @@ import { act } from "./act"
 import { agent } from "./agent"
 import { desktopAction } from "./desktop-action"
 import { extract } from "./extract"
+import { httpRequest } from "./http-request"
 import { observe } from "./observe"
 import { openUrl } from "./open-url"
 import { publishSocial } from "./publish-social"
@@ -40,4 +41,10 @@ export const nodeExecutors: Partial<Record<NodeType, NodeExecutor>> = {
     publishSocial({ userId, values }),
   "desktop-action": async ({ values, userId }) =>
     desktopAction({ userId, values }),
+  "http-request": async ({ values }) =>
+    httpRequest({
+      url: values.url,
+      method: values.method,
+      body: values.body,
+    }),
 }
