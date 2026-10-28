@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/nextjs"
 import { RefreshCwIcon } from "lucide-react"
 
 import { getDesktopUrl } from "@/actions/chat"
+import { LiveSessionPanel } from "@/components/live/session-view"
 import { AspectRatio } from "@/components/ui/aspect-ratio"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,6 +26,8 @@ type DesktopPanelContextValue = {
   open: boolean
   toggle: () => void
   status: DesktopStatus
+  /** Why the sandbox screen could not be shown, when it could not. */
+  failure: string | null
   connect: () => void
   // Moves the one live screen into the given element
   attachScreen: (slot: HTMLElement) => void
@@ -54,6 +57,7 @@ function DesktopPanelProvider({
 }) {
   const [open, setOpen] = React.useState(false)
   const [status, setStatus] = React.useState<DesktopStatus>("idle")
+  const [failure, setFailure] = React.useState<string | null>(null)
   const { checkPlan, checkUsage } = usePaywall()
 
   // The VNC client draws into this element. It is never rendered by React, so
@@ -93,6 +97,7 @@ function DesktopPanelProvider({
       rfb.addEventListener("connect", () => {
         if (attempt !== attemptRef.current) return
         setStatus("connected")
+        setFailure(null)
         Sentry.logger.info("Desktop connected", {
           "chat.id": chatId,
           "desktop.connect_ms": Date.now() - startedAt,
@@ -112,6 +117,10 @@ function DesktopPanelProvider({
     } catch (error) {
       if (attempt !== attemptRef.current) return
       setStatus("disconnected")
+      // The actions throw messages meant for a person (no desktop, plan
+      // refused, usage spent) — those are what the panel shows instead of a
+      // spinner that never resolves.
+      setFailure(error instanceof Error && error.message ? error.message : "No se pudo abrir la pantalla.")
       Sentry.logger.error("Desktop failed to open", {
         "chat.id": chatId,
         ...(error instanceof Error && { "error.message": error.message }),
@@ -159,15 +168,15 @@ function DesktopPanelProvider({
   }, [])
 
   const value = React.useMemo(
-    () => ({ open, toggle, status, connect, attachScreen, setInteractive }),
-    [open, toggle, status, connect, attachScreen, setInteractive]
+    () => ({ open, toggle, status, failure, connect, attachScreen, setInteractive }),
+    [open, toggle, status, failure, connect, attachScreen, setInteractive]
   )
 
   return <DesktopPanelContext value={value}>{children}</DesktopPanelContext>
 }
 
 function DesktopPanel({ name }: { name: string }) {
-  const { open, status, connect, attachScreen, setInteractive } =
+  const { open, status, failure, connect, attachScreen, setInteractive } =
     useDesktopPanel()
   const [fullscreen, setFullscreen] = React.useState(false)
   const [panelSlot, setPanelSlot] = React.useState<HTMLDivElement | null>(null)
@@ -215,7 +224,13 @@ function DesktopPanel({ name }: { name: string }) {
             <div className="flex min-h-0 flex-1 flex-col items-center gap-4 p-4 pt-0">
               <AspectRatio
                 ratio={4 / 3}
-                className="w-full max-w-2xl overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10"
+                className={
+                  status === "disconnected"
+                    ? // Kept mounted (but hidden) so the VNC surface still has a
+                      // slot to draw into while the fallback is on screen
+                      "hidden"
+                    : "w-full max-w-2xl overflow-hidden rounded-xl bg-muted ring-1 ring-foreground/10"
+                }
               >
                 <div ref={setPanelSlot} className="absolute inset-0" />
                 {status === "connected" ? (
@@ -225,14 +240,40 @@ function DesktopPanel({ name }: { name: string }) {
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-                    {status === "disconnected" ? (
-                      "Screen disconnected"
-                    ) : (
-                      <Spinner />
-                    )}
+                    <Spinner />
                   </div>
                 )}
               </AspectRatio>
+
+              {/* The sandbox screen could not open: instead of a dead box, show
+                  the cloud browser this account is actually using. The session
+                  comes from /api/live/session — the backend's own rows — so
+                  nothing here is simulated. */}
+              {status === "disconnected" && (
+                <div className="flex w-full max-w-2xl flex-col gap-3 rounded-xl border border-border/50 bg-card/40 p-4">
+                  <div>
+                    <p className="text-sm font-medium">
+                      No se pudo abrir la pantalla de este agente
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {failure ?? "Sin conexión con el escritorio remoto."}
+                    </p>
+                  </div>
+                  <div className="border-t border-border/40 pt-3">
+                    <LiveSessionPanel open />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-fit"
+                    onClick={connect}
+                  >
+                    <RefreshCwIcon data-icon="inline-start" />
+                    Reintentar la pantalla
+                  </Button>
+                </div>
+              )}
+
               <p className="text-sm text-muted-foreground">{title}</p>
             </div>
           </div>
